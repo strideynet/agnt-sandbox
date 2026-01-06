@@ -1,0 +1,88 @@
+---
+# ClusterRole defining what the agent can do
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: devoops-agent
+rules:
+  # Read-only access to core resources
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - namespaces
+      - events
+      - endpoints
+    verbs:
+      - get
+      - list
+      - watch
+
+  # Pod exec for testing
+  - apiGroups: [""]
+    resources:
+      - pods/exec
+    verbs:
+      - create
+      - get
+
+  # Read and write access to core workload resources
+  - apiGroups: [""]
+    resources:
+      - pods
+      - services
+      - configmaps
+      - secrets
+      - persistentvolumeclaims
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+
+  # Read and write access to apps resources
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+      - daemonsets
+      - replicasets
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+
+  # Read and write access to networking resources
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - ingresses
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+
+---
+# Bind the role to the ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: devoops-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: devoops-agent
+subjects:
+  - kind: ServiceAccount
+    name: devoops-agent
+    namespace: devoops
