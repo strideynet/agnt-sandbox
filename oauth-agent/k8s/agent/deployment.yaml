@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oauth-agent
+  namespace: oauth-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oauth-agent
+  template:
+    metadata:
+      labels:
+        app: oauth-agent
+    spec:
+      serviceAccountName: oauth-agent
+      containers:
+      - name: agent
+        image: oauth-agent:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: oauth-agent-secret
+              key: anthropic-api-key
+        - name: KEYCLOAK_URL
+          value: "http://keycloak:8080"
+        - name: KEYCLOAK_REALM
+          value: "agent-demo"
+        - name: CLIENT_ID
+          value: "consent-ui-client"
+        - name: CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: oauth-agent-secret
+              key: client-secret
+        - name: EXCHANGE_CLIENT_ID
+          value: "oauth-agent-client"
+        - name: EXCHANGE_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: oauth-agent-secret
+              key: exchange-client-secret
+        - name: CONSENT_UI_URL
+          value: "http://consent-ui:8080"
+        - name: DEMO_SERVICE_URL
+          value: "http://demo-service:5000"
+        # Mission configuration - customize these
+        - name: USERNAME
+          value: "alice"
+        - name: MISSION
+          value: "Check my identity and list my tasks"
+        resources:
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+      restartPolicy: Always

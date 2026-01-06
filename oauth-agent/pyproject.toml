@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oauth-agent"
+version = "0.1.0"
+description = "OAuth2 delegation experiment for agent systems"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.40.0",
+    "requests>=2.31.0",
+    "python-jose[cryptography]>=3.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+]

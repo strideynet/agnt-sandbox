@@ -30,3 +30,8 @@ This repository may contain multiple sub-projects as we explore different approa
 - Explore permission delegation patterns
 - Understand the operational characteristics of long-lived agent processes
 - Investigate the security and trust implications of delegated agent authority
+
+## Environment Notes
+
+- Using Docker Desktop (not kind or minikube)
+- Do not invoke `kind load docker-image` commands

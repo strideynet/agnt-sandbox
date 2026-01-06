@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consent-ui
+  namespace: oauth-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: consent-ui
+  template:
+    metadata:
+      labels:
+        app: consent-ui
+    spec:
+      containers:
+      - name: consent-ui
+        image: oauth-consent-ui:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: KEYCLOAK_URL
+          value: "http://keycloak:8080"
+        - name: KEYCLOAK_REALM
+          value: "agent-demo"
+        - name: CLIENT_ID
+          value: "consent-ui-client"
+        - name: CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: oauth-agent-secret
+              key: client-secret
+        - name: REDIRECT_URI
+          value: "http://localhost:30800/callback"
+        - name: DEMO_SERVICE_URL
+          value: "http://demo-service:5000"
+        - name: SESSION_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: oauth-agent-secret
+              key: session-secret
+        resources:
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+          requests:
+            memory: "128Mi"
+            cpu: "250m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
