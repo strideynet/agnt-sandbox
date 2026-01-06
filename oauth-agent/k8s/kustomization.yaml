@@ -5,7 +5,6 @@ namespace: oauth-agent
 
 resources:
   - namespace.yaml
-  - keycloak/
   - demo-service/
   - ui/
   - agent/

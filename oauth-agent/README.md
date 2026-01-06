@@ -28,10 +28,12 @@ This project investigates how agents can receive delegated permissions from user
 
 ### Components
 
-1. **Keycloak**: Identity provider and authorization server
+1. **Keycloak**: Identity provider and authorization server (shared infrastructure)
 2. **Consent UI**: Web interface for OAuth2 authorization flow
 3. **Agent**: Long-lived process that acts with delegated permissions
 4. **Demo Service**: Example API that validates OAuth2 tokens
+
+**Note**: This experiment uses the shared Keycloak instance from [../shared-infra/keycloak](../shared-infra/keycloak) with its own dedicated realm (`agent-demo`).
 
 ## Key Concepts
 
@@ -58,15 +60,17 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed step-by-step instructions.
 ```bash
 cd oauth-agent
 
-# 1. Deploy infrastructure
-kubectl apply -f k8s/namespace.yaml
-kubectl apply -k k8s/keycloak/
-kubectl wait -n oauth-agent --for=condition=ready pod -l app=keycloak --timeout=300s
+# 1. Deploy shared Keycloak infrastructure (if not already deployed)
+kubectl apply -k ../shared-infra/keycloak/
+kubectl wait -n keycloak --for=condition=ready pod -l app=keycloak --timeout=300s
 
-# 2. Configure Keycloak (creates realm, client, and demo users)
+# 2. Deploy oauth-agent namespace
+kubectl apply -f k8s/namespace.yaml
+
+# 3. Configure Keycloak realm (creates realm, clients, and demo users)
 ./scripts/setup-keycloak.sh
 
-# 3. Build images
+# 4. Build images
 docker build -f demo-service/Dockerfile -t oauth-demo-service:latest demo-service/
 docker build -f Dockerfile.ui -t oauth-consent-ui:latest .
 docker build -f Dockerfile.agent -t oauth-agent:latest .
@@ -74,20 +78,20 @@ docker build -f Dockerfile.agent -t oauth-agent:latest .
 # If using kind:
 kind load docker-image oauth-demo-service:latest oauth-consent-ui:latest oauth-agent:latest
 
-# 4. Configure secrets
+# 5. Configure secrets
 cp k8s/ui/secret.env.example k8s/ui/secret.env
 # Edit k8s/ui/secret.env with your Anthropic API key
 
-# 5. Deploy all services
+# 6. Deploy all services
 kubectl apply -k k8s/demo-service/
 kubectl apply -k k8s/ui/
 
-# 6. Complete OAuth flow
+# 7. Complete OAuth flow
 # Open http://localhost:30800
 # Log in as: alice / password
 # Grant permissions to agent
 
-# 7. Deploy and watch the agent
+# 8. Deploy and watch the agent
 kubectl apply -k k8s/agent/
 kubectl logs -n oauth-agent -f -l app=oauth-agent
 ```

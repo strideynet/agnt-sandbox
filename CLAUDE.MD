@@ -35,3 +35,8 @@ This repository may contain multiple sub-projects as we explore different approa
 
 - Using Docker Desktop (not kind or minikube)
 - Do not invoke `kind load docker-image` commands
+
+## Development Preferences
+
+- Prefer Python with UV over bash scripts for automation and scripting tasks
+- Use UV for Python project management and dependency handling

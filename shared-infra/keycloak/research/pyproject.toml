@@ -1,0 +1,10 @@
+[project]
+name = "keycloak-research"
+version = "0.1.0"
+description = "Research experiments for Keycloak OAuth2 and Token Exchange"
+requires-python = ">=3.9"
+dependencies = [
+    "requests>=2.31.0",
+    "pyjwt>=2.8.0",
+    "cryptography>=42.0.0",
+]

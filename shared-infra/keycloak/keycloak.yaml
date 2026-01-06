@@ -3,7 +3,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: keycloak-secret
-  namespace: oauth-agent
+  namespace: keycloak
 type: Opaque
 stringData:
   KEYCLOAK_ADMIN: admin
@@ -14,7 +14,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: keycloak
-  namespace: oauth-agent
+  namespace: keycloak
 spec:
   replicas: 1
   selector:
@@ -31,7 +31,6 @@ spec:
         args:
         - start-dev
         - --http-port=8080
-        - --features=token-exchange
         env:
         - name: KC_DB
           value: postgres
@@ -53,16 +52,18 @@ spec:
         ports:
         - name: http
           containerPort: 8080
+        - name: management
+          containerPort: 9000
         readinessProbe:
           httpGet:
             path: /health/ready
-            port: 8080
+            port: 9000
           initialDelaySeconds: 30
           periodSeconds: 10
         livenessProbe:
           httpGet:
             path: /health/live
-            port: 8080
+            port: 9000
           initialDelaySeconds: 60
           periodSeconds: 10
         resources:
@@ -77,7 +78,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: keycloak
-  namespace: oauth-agent
+  namespace: keycloak
 spec:
   selector:
     app: keycloak
@@ -91,7 +92,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: keycloak-external
-  namespace: oauth-agent
+  namespace: keycloak
 spec:
   selector:
     app: keycloak

@@ -3,7 +3,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: postgres-config
-  namespace: oauth-agent
+  namespace: keycloak
 data:
   POSTGRES_DB: keycloak
   POSTGRES_USER: keycloak
@@ -12,7 +12,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: postgres-secret
-  namespace: oauth-agent
+  namespace: keycloak
 type: Opaque
 stringData:
   POSTGRES_PASSWORD: keycloak-dev-password
@@ -21,7 +21,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: postgres-pvc
-  namespace: oauth-agent
+  namespace: keycloak
 spec:
   accessModes:
     - ReadWriteOnce
@@ -33,7 +33,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: postgres
-  namespace: oauth-agent
+  namespace: keycloak
 spec:
   replicas: 1
   selector:
@@ -74,7 +74,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: postgres
-  namespace: oauth-agent
+  namespace: keycloak
 spec:
   selector:
     app: postgres
