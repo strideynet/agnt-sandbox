@@ -35,11 +35,11 @@ kubectl get pods -n $NAMESPACE
 # Test 2: Check Keycloak health
 echo ""
 echo "Test 2: Checking Keycloak health..."
-if curl -s -f "$KEYCLOAK_URL/health/ready" > /dev/null 2>&1; then
+if curl -s -f "$KEYCLOAK_URL/realms/master" > /dev/null 2>&1; then
     echo -e "${GREEN}✓ Keycloak is healthy${NC}"
 else
     echo -e "${RED}✗ Keycloak health check failed${NC}"
-    echo "  URL: $KEYCLOAK_URL/health/ready"
+    echo "  URL: $KEYCLOAK_URL/realms/master"
     exit 1
 fi
 

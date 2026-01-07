@@ -25,7 +25,7 @@ spec:
               name: oauth-agent-secret
               key: anthropic-api-key
         - name: KEYCLOAK_URL
-          value: "http://keycloak:8080"
+          value: "http://keycloak.keycloak.svc.cluster.local:8080"
         - name: KEYCLOAK_REALM
           value: "agent-demo"
         - name: CLIENT_ID

@@ -28,8 +28,9 @@ CLIENT_SECRET = os.getenv("CLIENT_SECRET", "agent-secret-change-in-production")
 REDIRECT_URI = os.getenv("REDIRECT_URI", "http://localhost:30800/callback")
 
 # OAuth2 endpoints
-# AUTH/LOGOUT use public URL (browser redirects)
-# TOKEN/USERINFO use internal URL (server-to-server calls from consent UI pod)
+# Both KEYCLOAK_URL and KEYCLOAK_PUBLIC_URL should point to the same Keycloak instance
+# For Docker Desktop: KEYCLOAK_URL=host.docker.internal:30080, KEYCLOAK_PUBLIC_URL=localhost:30080
+# This ensures token issuer matches validation URL (both resolve to host's NodePort service)
 AUTH_ENDPOINT = f"{KEYCLOAK_PUBLIC_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/auth"
 TOKEN_ENDPOINT = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token"
 USERINFO_ENDPOINT = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/userinfo"
@@ -288,17 +289,32 @@ def callback():
 
     try:
         logger.info("Exchanging authorization code for tokens...")
+        logger.info(f"TOKEN_ENDPOINT: {TOKEN_ENDPOINT}")
         token_response = requests.post(TOKEN_ENDPOINT, data=token_data, timeout=10)
         token_response.raise_for_status()
         tokens = token_response.json()
 
+        # Log token details for debugging
+        logger.info(f"✓ Token exchange successful")
+        logger.info(f"  Token type: {tokens.get('token_type')}")
+        logger.info(f"  Expires in: {tokens.get('expires_in')} seconds")
+        logger.info(f"  Scope: {tokens.get('scope')}")
+        logger.info(f"  FULL ACCESS TOKEN: {tokens['access_token']}")
+        if 'refresh_token' in tokens:
+            logger.info(f"  FULL REFRESH TOKEN: {tokens.get('refresh_token')}")
+
         # Get user info
         logger.info("Fetching user information...")
+        logger.info(f"USERINFO_ENDPOINT: {USERINFO_ENDPOINT}")
+        logger.info(f"Full Authorization header: Bearer {tokens['access_token']}")
         userinfo_response = requests.get(
             USERINFO_ENDPOINT,
             headers={"Authorization": f"Bearer {tokens['access_token']}"},
             timeout=10
         )
+        logger.info(f"Userinfo response status: {userinfo_response.status_code}")
+        if userinfo_response.status_code != 200:
+            logger.error(f"Userinfo response body: {userinfo_response.text}")
         userinfo_response.raise_for_status()
         user_info = userinfo_response.json()
 

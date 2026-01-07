@@ -39,6 +39,10 @@ env/
 # Kubernetes secrets (never commit!)
 k8s/secret.yaml
 k8s/secret.env
+k8s/agent/secret.yaml
+k8s/agent/secret.env
+k8s/ui/secret.yaml
+k8s/ui/secret.env
 
 # Testing
 .pytest_cache/

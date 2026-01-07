@@ -20,14 +20,18 @@ spec:
         - name: agent
           image: devoops:latest
           imagePullPolicy: Never  # For local development
+          ports:
+            - containerPort: 5000
           env:
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: devoops-config
                   key: ANTHROPIC_API_KEY
-            - name: MISSION
-              value: "Deploy a simple nginx web server in the default namespace with a Service, then verify it's working by making an HTTP request to it"
+            - name: MODE
+              value: "server"
+            - name: PORT
+              value: "5000"
           resources:
             requests:
               memory: "256Mi"
@@ -35,3 +39,15 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 5

@@ -12,6 +12,7 @@ dependencies = [
     "kubernetes>=31.0.0",
     "requests>=2.31.0",
     "pyyaml>=6.0",
+    "flask>=3.0.0",
 ]
 
 [project.optional-dependencies]

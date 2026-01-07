@@ -12,6 +12,7 @@ Devoops is an experimental agent that explores the concept of long-lived agents 
 - **Identity**: Kubernetes ServiceAccount with RBAC permissions
 - **Intelligence**: Claude API with tool calling
 - **Scope**: Single cluster (in-cluster operations only)
+- **Interface**: Web UI for mission submission and monitoring
 
 ## Features
 
@@ -28,6 +29,7 @@ Give the agent a mission like:
 - "Check if there are any crashlooping pods in the default namespace and investigate why"
 - "Scale the nginx deployment to 3 replicas"
 - "Find all pods using more than 500Mi of memory"
+- "Deploy a simple nginx web server with a Service and test it"
 
 The agent uses Claude's reasoning to break down the mission and execute appropriate Kubernetes operations.
 
@@ -36,12 +38,93 @@ The agent uses Claude's reasoning to break down the mission and execute appropri
 ### Prerequisites
 
 - Python 3.11+
-- A Kubernetes cluster
+- A Kubernetes cluster (Docker Desktop recommended)
 - Anthropic API key
+- Shared Keycloak infrastructure (for authentication)
 
-### Local Development
+### Deploy to Kubernetes (Recommended)
 
-Test the agent locally (it will use your kubeconfig):
+1. **Deploy shared Keycloak infrastructure** (if not already deployed):
+
+```bash
+# From repository root
+kubectl apply -k shared-infra/keycloak/
+
+# Wait for Keycloak to be ready
+kubectl wait -n keycloak --for=condition=ready pod -l app=keycloak --timeout=300s
+```
+
+2. **Set up Keycloak realm for devoops:**
+
+```bash
+cd devoops
+python3 scripts/setup_realm.py
+```
+
+This creates:
+- Realm: `devoops`
+- Client: `devoops-ui-client`
+- Demo users: `alice/password`, `bob/password`
+
+3. **Build the container images:**
+
+```bash
+# Build agent image
+docker build -t devoops:latest .
+
+# Build UI image
+docker build -t devoops-ui:latest -f Dockerfile.ui .
+```
+
+Note: For Docker Desktop, these images are automatically available. For kind/minikube, you'll need to load them.
+
+4. **Configure secrets:**
+
+```bash
+# Agent API key
+cp k8s/agent/secret.env.example k8s/agent/secret.env
+# Edit k8s/agent/secret.env and add your Anthropic API key
+
+# UI OAuth2 secrets
+cp k8s/ui/secret.env.example k8s/ui/secret.env
+# Edit k8s/ui/secret.env if needed (defaults work for demo)
+```
+
+5. **Deploy:**
+
+```bash
+kubectl apply -k k8s/
+```
+
+6. **Access the Mission Control UI:**
+
+Open your browser to [http://localhost:30900](http://localhost:30900)
+
+You'll be redirected to Keycloak for authentication. Login with:
+- **Username**: `alice` or `bob`
+- **Password**: `password`
+
+After authentication, the UI allows you to:
+- Submit missions with a simple web form
+- View real-time logs as the agent works
+- See mission results when complete
+- Track mission history
+
+7. **Watch the agent logs (optional):**
+
+```bash
+kubectl logs -n devoops -f deployment/devoops-agent
+```
+
+8. **Clean up:**
+
+```bash
+kubectl delete -k k8s/
+```
+
+### Local Development (CLI Mode)
+
+Test the agent locally without Kubernetes (it will use your kubeconfig):
 
 ```bash
 cd devoops
@@ -51,58 +134,39 @@ export MISSION="List all pods in the default namespace"
 python -m devoops
 ```
 
-### Deploy to Kubernetes
+Note: This runs in CLI mode (single mission, then exits). For the web UI and mission queue, deploy to Kubernetes.
 
-1. **Build the container image:**
+## Authentication
 
-```bash
-cd devoops
-docker build -t devoops:latest .
-```
+The Mission Control UI requires authentication via the shared Keycloak instance. This ensures only authorized users can submit missions to the agent.
 
-For local testing with kind/minikube, load the image:
-```bash
-# For kind:
-kind load docker-image devoops:latest
+### Demo Users
 
-# For minikube:
-minikube image load devoops:latest
-```
+For development and testing, two demo users are created:
+- `alice / password`
+- `bob / password`
 
-2. **Configure your API key:**
+### OAuth2 Flow
 
-Create `k8s/secret.env` from the example:
-```bash
-cp k8s/secret.env.example k8s/secret.env
-```
+The UI uses OAuth2 Authorization Code Flow:
+1. User visits Mission Control UI
+2. Redirected to Keycloak login page
+3. After successful authentication, redirected back to UI
+4. Session established - user can now submit missions
 
-Edit `k8s/secret.env` and add your actual Anthropic API key. This file is gitignored and won't be committed.
+### Keycloak Realm
 
-3. **Set the mission:**
-
-Edit `k8s/deployment.yaml` and update the `MISSION` environment variable with your desired task.
-
-4. **Deploy:**
-
-```bash
-kubectl apply -k k8s/
-```
-
-5. **Watch the agent work:**
-
-```bash
-kubectl logs -n devoops -f deployment/devoops-agent
-```
-
-6. **Clean up:**
-
-```bash
-kubectl delete -k k8s/
-```
+The devoops realm (`devoops`) is isolated from other experiments. Each experiment has its own realm in the shared Keycloak instance for security and organization.
 
 ## Security Considerations
 
 ⚠️ This agent has elevated permissions in your cluster. The RBAC configuration defines what it can and cannot do. Review [k8s/rbac.yaml](k8s/rbac.yaml) carefully before deployment.
+
+⚠️ The demo uses development credentials and secrets. For production use:
+- Change all secrets in `k8s/agent/secret.env` and `k8s/ui/secret.env`
+- Use proper user management in Keycloak
+- Enable HTTPS/TLS for all services
+- Review and tighten RBAC permissions
 
 ## Project Status
 

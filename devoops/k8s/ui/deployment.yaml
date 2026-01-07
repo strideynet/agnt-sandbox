@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devoops-ui
+  namespace: devoops
+  labels:
+    app: devoops-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: devoops-ui
+  template:
+    metadata:
+      labels:
+        app: devoops-ui
+    spec:
+      containers:
+        - name: ui
+          image: devoops-ui:latest
+          imagePullPolicy: Never  # For local development
+          ports:
+            - containerPort: 8080
+          env:
+            - name: AGENT_URL
+              value: "http://devoops-agent:5000"
+            - name: PORT
+              value: "8080"
+            - name: KEYCLOAK_URL
+              value: "http://host.docker.internal:30080"
+            - name: KEYCLOAK_PUBLIC_URL
+              value: "http://localhost:30080"
+            - name: KEYCLOAK_REALM
+              value: "devoops"
+            - name: CLIENT_ID
+              value: "devoops-ui-client"
+            - name: REDIRECT_URI
+              value: "http://localhost:30900/callback"
+            - name: CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: devoops-ui-config
+                  key: CLIENT_SECRET
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: devoops-ui-config
+                  key: SESSION_SECRET
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5

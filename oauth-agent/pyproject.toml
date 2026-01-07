@@ -17,3 +17,9 @@ dependencies = [
 dev = [
     "pytest>=7.4.0",
 ]
+
+[tool.setuptools]
+packages = ["agent", "ui"]
+
+[tool.setuptools.package-data]
+"*" = ["*.yaml", "*.yml"]

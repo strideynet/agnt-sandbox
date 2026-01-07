@@ -21,7 +21,9 @@ spec:
         - containerPort: 8080
         env:
         - name: KEYCLOAK_URL
-          value: "http://keycloak:8080"
+          value: "http://host.docker.internal:30080"
+        - name: KEYCLOAK_PUBLIC_URL
+          value: "http://localhost:30080"
         - name: KEYCLOAK_REALM
           value: "agent-demo"
         - name: CLIENT_ID
