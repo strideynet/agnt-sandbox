@@ -23,11 +23,11 @@ spec:
           ports:
             - containerPort: 5000
           env:
-            - name: ANTHROPIC_API_KEY
+            - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: devoops-config
-                  key: ANTHROPIC_API_KEY
+                  key: OPENAI_API_KEY
             - name: MODE
               value: "server"
             - name: PORT

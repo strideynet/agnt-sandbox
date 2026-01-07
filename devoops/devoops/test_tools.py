@@ -246,109 +246,121 @@ class TestingClient:
             )
 
 
-# Tool definitions for Claude API
+# Tool definitions for OpenAI API
 TESTING_TOOLS = [
     {
-        "name": "http_request",
-        "description": "Make an HTTP request to test endpoints like services or ingresses. Use service DNS names like http://servicename.namespace.svc.cluster.local:port",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "URL to request (e.g., http://nginx.default.svc.cluster.local:80)",
+        "type": "function",
+        "function": {
+            "name": "http_request",
+            "description": "Make an HTTP request to test endpoints like services or ingresses. Use service DNS names like http://servicename.namespace.svc.cluster.local:port",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "URL to request (e.g., http://nginx.default.svc.cluster.local:80)",
+                    },
+                    "method": {
+                        "type": "string",
+                        "description": "HTTP method (GET, POST, etc.). Defaults to GET.",
+                        "default": "GET",
+                    },
+                    "headers": {
+                        "type": "object",
+                        "description": "Optional HTTP headers as key-value pairs",
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Optional request body",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Request timeout in seconds. Defaults to 10.",
+                        "default": 10,
+                    },
                 },
-                "method": {
-                    "type": "string",
-                    "description": "HTTP method (GET, POST, etc.). Defaults to GET.",
-                    "default": "GET",
-                },
-                "headers": {
-                    "type": "object",
-                    "description": "Optional HTTP headers as key-value pairs",
-                },
-                "body": {
-                    "type": "string",
-                    "description": "Optional request body",
-                },
-                "timeout": {
-                    "type": "integer",
-                    "description": "Request timeout in seconds. Defaults to 10.",
-                    "default": 10,
-                },
+                "required": ["url"],
             },
-            "required": ["url"],
-        },
+        }
     },
     {
-        "name": "exec_in_pod",
-        "description": "Execute a command inside a pod for testing or verification. Useful for checking connectivity, running tests, etc.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "pod_name": {
-                    "type": "string",
-                    "description": "Name of the pod to execute command in",
+        "type": "function",
+        "function": {
+            "name": "exec_in_pod",
+            "description": "Execute a command inside a pod for testing or verification. Useful for checking connectivity, running tests, etc.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pod_name": {
+                        "type": "string",
+                        "description": "Name of the pod to execute command in",
+                    },
+                    "command": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Command to execute as an array (e.g., ['curl', 'http://google.com'])",
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "Namespace the pod is in. Defaults to 'default'.",
+                        "default": "default",
+                    },
+                    "container": {
+                        "type": "string",
+                        "description": "Container name (uses first container if not specified)",
+                    },
                 },
-                "command": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Command to execute as an array (e.g., ['curl', 'http://google.com'])",
-                },
-                "namespace": {
-                    "type": "string",
-                    "description": "Namespace the pod is in. Defaults to 'default'.",
-                    "default": "default",
-                },
-                "container": {
-                    "type": "string",
-                    "description": "Container name (uses first container if not specified)",
-                },
+                "required": ["pod_name", "command"],
             },
-            "required": ["pod_name", "command"],
-        },
+        }
     },
     {
-        "name": "wait_for_pod_ready",
-        "description": "Wait for a pod to be in Ready state. Use this before testing newly created pods.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "pod_name": {
-                    "type": "string",
-                    "description": "Name of the pod to wait for",
+        "type": "function",
+        "function": {
+            "name": "wait_for_pod_ready",
+            "description": "Wait for a pod to be in Ready state. Use this before testing newly created pods.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pod_name": {
+                        "type": "string",
+                        "description": "Name of the pod to wait for",
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "Namespace the pod is in. Defaults to 'default'.",
+                        "default": "default",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Maximum time to wait in seconds. Defaults to 60.",
+                        "default": 60,
+                    },
                 },
-                "namespace": {
-                    "type": "string",
-                    "description": "Namespace the pod is in. Defaults to 'default'.",
-                    "default": "default",
-                },
-                "timeout": {
-                    "type": "integer",
-                    "description": "Maximum time to wait in seconds. Defaults to 60.",
-                    "default": 60,
-                },
+                "required": ["pod_name"],
             },
-            "required": ["pod_name"],
-        },
+        }
     },
     {
-        "name": "check_service_endpoints",
-        "description": "Check if a service has endpoints (backing pods). Useful for verifying that a service is properly configured.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "service_name": {
-                    "type": "string",
-                    "description": "Name of the service to check",
+        "type": "function",
+        "function": {
+            "name": "check_service_endpoints",
+            "description": "Check if a service has endpoints (backing pods). Useful for verifying that a service is properly configured.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "service_name": {
+                        "type": "string",
+                        "description": "Name of the service to check",
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "Namespace the service is in. Defaults to 'default'.",
+                        "default": "default",
+                    },
                 },
-                "namespace": {
-                    "type": "string",
-                    "description": "Namespace the service is in. Defaults to 'default'.",
-                    "default": "default",
-                },
+                "required": ["service_name"],
             },
-            "required": ["service_name"],
-        },
+        }
     },
 ]

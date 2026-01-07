@@ -1,13 +1,14 @@
 """Main agent implementation for devoops."""
 
 import os
+import json
 import logging
 import threading
 import time
 from datetime import datetime
 from enum import Enum
 from typing import Optional, Dict, List
-from anthropic import Anthropic
+from openai import OpenAI
 from devoops.k8s_tools import K8sClient, TOOLS
 from devoops.test_tools import TestingClient, TESTING_TOOLS
 
@@ -69,13 +70,16 @@ class DevoopsAgent:
         """Initialize the agent.
 
         Args:
-            api_key: Anthropic API key
+            api_key: OpenAI API key
             in_cluster: Whether running in-cluster (use ServiceAccount) or local
         """
-        self.client = Anthropic(api_key=api_key)
+        self.client = OpenAI(api_key=api_key)
         self.k8s = K8sClient(in_cluster=in_cluster)
         self.testing = TestingClient(core_v1=self.k8s.core_v1)
-        self.model = "claude-sonnet-4-20250514"
+        self.model = "gpt-4o"
+
+        # Tools are already in OpenAI format
+        self.tools = TOOLS + TESTING_TOOLS
 
         # Mission storage (in-memory)
         self.missions: Dict[str, Mission] = {}
@@ -194,74 +198,73 @@ Always test your changes when possible to ensure the mission succeeded."""
         Returns:
             The final response from the agent
         """
-        messages = [{"role": "user", "content": mission.prompt}]
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": mission.prompt}
+        ]
 
         # Agentic loop
         while True:
-            response = self.client.messages.create(
+            response = self.client.chat.completions.create(
                 model=self.model,
                 max_tokens=4096,
-                tools=TOOLS + TESTING_TOOLS,
+                tools=self.tools,
                 messages=messages,
-                system=self.system_prompt,
             )
 
-            mission.add_log(f"Stop reason: {response.stop_reason}")
+            message = response.choices[0].message
+            finish_reason = response.choices[0].finish_reason
+
+            mission.add_log(f"Finish reason: {finish_reason}")
 
             # Add assistant response to conversation
-            messages.append({"role": "assistant", "content": response.content})
+            messages.append(message)
 
             # Check if we're done
-            if response.stop_reason == "end_turn":
-                # Extract final text response
-                final_response = ""
-                for block in response.content:
-                    if hasattr(block, "text"):
-                        final_response += block.text
-                return final_response
+            if finish_reason == "stop":
+                # Return the final text response
+                return message.content or ""
 
             # Process tool calls
-            if response.stop_reason == "tool_use":
-                tool_results = []
+            if finish_reason == "tool_calls" and message.tool_calls:
+                tool_messages = []
 
-                for block in response.content:
-                    if block.type == "tool_use":
-                        tool_name = block.name
-                        tool_input = block.input
+                for tool_call in message.tool_calls:
+                    tool_name = tool_call.function.name
+                    tool_input = json.loads(tool_call.function.arguments)
 
-                        mission.add_log(f"Executing tool: {tool_name}")
+                    mission.add_log(f"Executing tool: {tool_name}")
 
-                        # Execute the tool
-                        try:
-                            result = self._execute_tool(tool_name, tool_input)
-                            result_preview = result[:200] if len(result) > 200 else result
-                            mission.add_log(f"Tool result: {result_preview}...")
+                    # Execute the tool
+                    try:
+                        result = self._execute_tool(tool_name, tool_input)
+                        result_preview = result[:200] if len(result) > 200 else result
+                        mission.add_log(f"Tool result: {result_preview}...")
 
-                            tool_results.append({
-                                "type": "tool_result",
-                                "tool_use_id": block.id,
-                                "content": result,
-                            })
-                        except Exception as e:
-                            error_msg = f"Error executing tool: {str(e)}"
-                            mission.add_log(error_msg)
-                            tool_results.append({
-                                "type": "tool_result",
-                                "tool_use_id": block.id,
-                                "content": error_msg,
-                                "is_error": True,
-                            })
+                        tool_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": result,
+                        })
+                    except Exception as e:
+                        error_msg = f"Error executing tool: {str(e)}"
+                        mission.add_log(error_msg)
+                        tool_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": error_msg,
+                        })
 
                 # Add tool results to conversation
-                messages.append({"role": "user", "content": tool_results})
+                messages.extend(tool_messages)
 
             else:
-                # Unexpected stop reason
-                mission.add_log(f"Unexpected stop reason: {response.stop_reason}")
+                # Unexpected finish reason
+                mission.add_log(f"Unexpected finish reason: {finish_reason}")
                 return "Mission ended unexpectedly"
 
     def execute_mission(self, mission: str) -> str:
-        """Execute a mission using Claude and Kubernetes tools.
+        """Execute a mission using OpenAI and Kubernetes tools.
 
         Args:
             mission: The mission prompt describing what to do
@@ -271,69 +274,68 @@ Always test your changes when possible to ensure the mission succeeded."""
         """
         logger.info(f"Starting mission: {mission}")
 
-        messages = [{"role": "user", "content": mission}]
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": mission}
+        ]
 
         # Agentic loop
         while True:
-            response = self.client.messages.create(
+            response = self.client.chat.completions.create(
                 model=self.model,
                 max_tokens=4096,
-                tools=TOOLS + TESTING_TOOLS,  # Combine K8s and testing tools
+                tools=self.tools,  # Use converted tools
                 messages=messages,
-                system=self.system_prompt,  # Add system prompt
             )
 
-            logger.info(f"Stop reason: {response.stop_reason}")
+            message = response.choices[0].message
+            finish_reason = response.choices[0].finish_reason
+
+            logger.info(f"Finish reason: {finish_reason}")
 
             # Add assistant response to conversation
-            messages.append({"role": "assistant", "content": response.content})
+            messages.append(message)
 
             # Check if we're done
-            if response.stop_reason == "end_turn":
-                # Extract final text response
-                final_response = ""
-                for block in response.content:
-                    if hasattr(block, "text"):
-                        final_response += block.text
+            if finish_reason == "stop":
+                # Return the final text response
                 logger.info("Mission completed")
-                return final_response
+                return message.content or ""
 
             # Process tool calls
-            if response.stop_reason == "tool_use":
-                tool_results = []
+            if finish_reason == "tool_calls" and message.tool_calls:
+                tool_messages = []
 
-                for block in response.content:
-                    if block.type == "tool_use":
-                        tool_name = block.name
-                        tool_input = block.input
+                for tool_call in message.tool_calls:
+                    tool_name = tool_call.function.name
+                    tool_input = json.loads(tool_call.function.arguments)
 
-                        logger.info(f"Executing tool: {tool_name} with input: {tool_input}")
+                    logger.info(f"Executing tool: {tool_name} with input: {tool_input}")
 
-                        # Execute the tool
-                        try:
-                            result = self._execute_tool(tool_name, tool_input)
-                            logger.info(f"Tool result: {result[:200]}...")  # Log first 200 chars
+                    # Execute the tool
+                    try:
+                        result = self._execute_tool(tool_name, tool_input)
+                        logger.info(f"Tool result: {result[:200]}...")  # Log first 200 chars
 
-                            tool_results.append({
-                                "type": "tool_result",
-                                "tool_use_id": block.id,
-                                "content": result,
-                            })
-                        except Exception as e:
-                            logger.error(f"Tool execution error: {e}")
-                            tool_results.append({
-                                "type": "tool_result",
-                                "tool_use_id": block.id,
-                                "content": f"Error executing tool: {str(e)}",
-                                "is_error": True,
-                            })
+                        tool_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": result,
+                        })
+                    except Exception as e:
+                        logger.error(f"Tool execution error: {e}")
+                        tool_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": f"Error executing tool: {str(e)}",
+                        })
 
                 # Add tool results to conversation
-                messages.append({"role": "user", "content": tool_results})
+                messages.extend(tool_messages)
 
             else:
-                # Unexpected stop reason
-                logger.warning(f"Unexpected stop reason: {response.stop_reason}")
+                # Unexpected finish reason
+                logger.warning(f"Unexpected finish reason: {finish_reason}")
                 break
 
         return "Mission ended unexpectedly"
@@ -426,9 +428,9 @@ def create_flask_app(agent: DevoopsAgent):
 def main():
     """Main entry point for the agent."""
     # Get configuration from environment
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        logger.error("ANTHROPIC_API_KEY environment variable not set")
+        logger.error("OPENAI_API_KEY environment variable not set")
         return
 
     # Detect if running in cluster

@@ -419,181 +419,208 @@ class K8sClient:
             }, indent=2)
 
 
-# Tool definitions for Claude API
+# Tool definitions for OpenAI API
 TOOLS = [
     {
-        "name": "list_pods",
-        "description": "List all pods in a Kubernetes namespace. Returns pod names, status, restart counts, and container information.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "namespace": {
-                    "type": "string",
-                    "description": "The namespace to list pods from. Defaults to 'default'.",
-                    "default": "default"
-                }
-            },
+        "type": "function",
+        "function": {
+            "name": "list_pods",
+            "description": "List all pods in a Kubernetes namespace. Returns pod names, status, restart counts, and container information.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "namespace": {
+                        "type": "string",
+                        "description": "The namespace to list pods from. Defaults to 'default'.",
+                        "default": "default"
+                    }
+                },
+            }
         }
     },
     {
-        "name": "get_pod_logs",
-        "description": "Retrieve logs from a specific pod. Useful for debugging issues.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "The name of the pod to get logs from"
+        "type": "function",
+        "function": {
+            "name": "get_pod_logs",
+            "description": "Retrieve logs from a specific pod. Useful for debugging issues.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The name of the pod to get logs from"
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "The namespace the pod is in. Defaults to 'default'.",
+                        "default": "default"
+                    },
+                    "tail_lines": {
+                        "type": "integer",
+                        "description": "Number of lines to retrieve from the end of logs. Defaults to 100.",
+                        "default": 100
+                    }
                 },
-                "namespace": {
-                    "type": "string",
-                    "description": "The namespace the pod is in. Defaults to 'default'.",
-                    "default": "default"
-                },
-                "tail_lines": {
-                    "type": "integer",
-                    "description": "Number of lines to retrieve from the end of logs. Defaults to 100.",
-                    "default": 100
-                }
-            },
-            "required": ["name"]
+                "required": ["name"]
+            }
         }
     },
     {
-        "name": "describe_pod",
-        "description": "Get detailed information about a specific pod including container status, conditions, and recent events.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "The name of the pod to describe"
+        "type": "function",
+        "function": {
+            "name": "describe_pod",
+            "description": "Get detailed information about a specific pod including container status, conditions, and recent events.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The name of the pod to describe"
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "The namespace the pod is in. Defaults to 'default'.",
+                        "default": "default"
+                    }
                 },
-                "namespace": {
-                    "type": "string",
-                    "description": "The namespace the pod is in. Defaults to 'default'.",
-                    "default": "default"
-                }
-            },
-            "required": ["name"]
+                "required": ["name"]
+            }
         }
     },
     {
-        "name": "list_deployments",
-        "description": "List all deployments in a namespace with their replica counts and availability status.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "namespace": {
-                    "type": "string",
-                    "description": "The namespace to list deployments from. Defaults to 'default'.",
-                    "default": "default"
-                }
-            },
+        "type": "function",
+        "function": {
+            "name": "list_deployments",
+            "description": "List all deployments in a namespace with their replica counts and availability status.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "namespace": {
+                        "type": "string",
+                        "description": "The namespace to list deployments from. Defaults to 'default'.",
+                        "default": "default"
+                    }
+                },
+            }
         }
     },
     {
-        "name": "scale_deployment",
-        "description": "Scale a deployment to a specific number of replicas. Use with caution as this modifies cluster state.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "The name of the deployment to scale"
+        "type": "function",
+        "function": {
+            "name": "scale_deployment",
+            "description": "Scale a deployment to a specific number of replicas. Use with caution as this modifies cluster state.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The name of the deployment to scale"
+                    },
+                    "replicas": {
+                        "type": "integer",
+                        "description": "The target number of replicas"
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "The namespace the deployment is in. Defaults to 'default'.",
+                        "default": "default"
+                    }
                 },
-                "replicas": {
-                    "type": "integer",
-                    "description": "The target number of replicas"
-                },
-                "namespace": {
-                    "type": "string",
-                    "description": "The namespace the deployment is in. Defaults to 'default'.",
-                    "default": "default"
-                }
-            },
-            "required": ["name", "replicas"]
+                "required": ["name", "replicas"]
+            }
         }
     },
     {
-        "name": "list_namespaces",
-        "description": "List all namespaces in the cluster.",
-        "input_schema": {
-            "type": "object",
-            "properties": {}
+        "type": "function",
+        "function": {
+            "name": "list_namespaces",
+            "description": "List all namespaces in the cluster.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
         }
     },
     {
-        "name": "apply_manifest",
-        "description": "Apply a Kubernetes YAML manifest to create or update resources. You can generate YAML manifests yourself and apply them using this tool.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "yaml_content": {
-                    "type": "string",
-                    "description": "The YAML manifest content to apply"
+        "type": "function",
+        "function": {
+            "name": "apply_manifest",
+            "description": "Apply a Kubernetes YAML manifest to create or update resources. You can generate YAML manifests yourself and apply them using this tool.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "yaml_content": {
+                        "type": "string",
+                        "description": "The YAML manifest content to apply"
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "Default namespace for resources without one specified. Defaults to 'default'.",
+                        "default": "default"
+                    }
                 },
-                "namespace": {
-                    "type": "string",
-                    "description": "Default namespace for resources without one specified. Defaults to 'default'.",
-                    "default": "default"
-                }
-            },
-            "required": ["yaml_content"]
+                "required": ["yaml_content"]
+            }
         }
     },
     {
-        "name": "delete_resource",
-        "description": "Delete a Kubernetes resource by kind and name.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "kind": {
-                    "type": "string",
-                    "description": "Resource kind (e.g., Pod, Deployment, Service)"
+        "type": "function",
+        "function": {
+            "name": "delete_resource",
+            "description": "Delete a Kubernetes resource by kind and name.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "description": "Resource kind (e.g., Pod, Deployment, Service)"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Resource name"
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "Namespace (ignored for cluster-scoped resources). Defaults to 'default'.",
+                        "default": "default"
+                    },
+                    "api_version": {
+                        "type": "string",
+                        "description": "API version (e.g., v1, apps/v1). Will be inferred if not provided."
+                    }
                 },
-                "name": {
-                    "type": "string",
-                    "description": "Resource name"
-                },
-                "namespace": {
-                    "type": "string",
-                    "description": "Namespace (ignored for cluster-scoped resources). Defaults to 'default'.",
-                    "default": "default"
-                },
-                "api_version": {
-                    "type": "string",
-                    "description": "API version (e.g., v1, apps/v1). Will be inferred if not provided."
-                }
-            },
-            "required": ["kind", "name"]
+                "required": ["kind", "name"]
+            }
         }
     },
     {
-        "name": "get_resource",
-        "description": "Get detailed information about any Kubernetes resource by kind and name.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "kind": {
-                    "type": "string",
-                    "description": "Resource kind (e.g., Pod, Deployment, Service)"
+        "type": "function",
+        "function": {
+            "name": "get_resource",
+            "description": "Get detailed information about any Kubernetes resource by kind and name.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "description": "Resource kind (e.g., Pod, Deployment, Service)"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Resource name"
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "Namespace (ignored for cluster-scoped resources). Defaults to 'default'.",
+                        "default": "default"
+                    },
+                    "api_version": {
+                        "type": "string",
+                        "description": "API version. Will be inferred if not provided."
+                    }
                 },
-                "name": {
-                    "type": "string",
-                    "description": "Resource name"
-                },
-                "namespace": {
-                    "type": "string",
-                    "description": "Namespace (ignored for cluster-scoped resources). Defaults to 'default'.",
-                    "default": "default"
-                },
-                "api_version": {
-                    "type": "string",
-                    "description": "API version. Will be inferred if not provided."
-                }
-            },
-            "required": ["kind", "name"]
+                "required": ["kind", "name"]
+            }
         }
     },
 ]
