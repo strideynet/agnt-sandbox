@@ -229,7 +229,7 @@ def main():
         "enabled": True,
         "clientAuthenticatorType": "client-secret",
         "secret": "devoops-ui-secret-change-in-production",
-        "redirectUris": ["http://localhost:30900/*"],
+        "redirectUris": ["http://localhost:30900/*", "http://localhost:30901/*"],
         "webOrigins": ["+"],
         "protocol": "openid-connect",
         "publicClient": False,
