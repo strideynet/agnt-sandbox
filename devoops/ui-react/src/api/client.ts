@@ -1,10 +1,7 @@
 import type { Mission, SubmitMissionRequest, ApiError, User } from '../types/mission';
 
-// In production, use empty string to use same origin (nginx proxies)
-// In development, use localhost:8080
-const API_BASE_URL = import.meta.env.VITE_API_URL !== undefined
-  ? import.meta.env.VITE_API_URL
-  : 'http://localhost:8080';
+// Use empty string for same-origin requests (React and Flask served via same nginx)
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
 class ApiClient {
   private baseUrl: string;
@@ -31,8 +28,7 @@ class ApiClient {
     if (response.status === 401) {
       // Redirect to login if unauthorized
       window.location.href = '/login-page';
-      // Return a never-resolving promise since we're navigating away
-      return new Promise(() => {});
+      throw new Error('Unauthorized');
     }
 
     if (!response.ok) {
@@ -61,18 +57,48 @@ class ApiClient {
     });
   }
 
-  // User info
+  // Human-in-the-loop endpoints
+  async respondToClarification(
+    missionId: string,
+    response: string
+  ): Promise<Mission> {
+    return this.fetch<Mission>(`/api/missions/${missionId}/respond`, {
+      method: 'POST',
+      body: JSON.stringify({ response }),
+    });
+  }
+
+  async approvePlan(missionId: string): Promise<Mission> {
+    return this.fetch<Mission>(`/api/missions/${missionId}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ approved: true }),
+    });
+  }
+
+  async rejectPlan(
+    missionId: string,
+    rejectionReason: string
+  ): Promise<Mission> {
+    return this.fetch<Mission>(`/api/missions/${missionId}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({
+        approved: false,
+        rejection_reason: rejectionReason,
+      }),
+    });
+  }
+
+  // Auth endpoints
   async getCurrentUser(): Promise<User> {
     return this.fetch<User>('/api/me');
   }
 
-  // Auth endpoints
   initiateLogin(): void {
-    window.location.href = `${this.baseUrl}/login`;
+    window.location.href = '/login';
   }
 
   initiateLogout(): void {
-    window.location.href = `${this.baseUrl}/logout`;
+    window.location.href = '/logout';
   }
 }
 

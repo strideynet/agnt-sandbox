@@ -246,8 +246,8 @@ class TestingClient:
             )
 
 
-# Tool definitions for OpenAI API
-TESTING_TOOLS = [
+# Read-only testing tools - these don't modify cluster state
+READ_ONLY_TESTING_TOOLS = [
     {
         "type": "function",
         "function": {
@@ -280,37 +280,6 @@ TESTING_TOOLS = [
                     },
                 },
                 "required": ["url"],
-            },
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "exec_in_pod",
-            "description": "Execute a command inside a pod for testing or verification. Useful for checking connectivity, running tests, etc.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "pod_name": {
-                        "type": "string",
-                        "description": "Name of the pod to execute command in",
-                    },
-                    "command": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Command to execute as an array (e.g., ['curl', 'http://google.com'])",
-                    },
-                    "namespace": {
-                        "type": "string",
-                        "description": "Namespace the pod is in. Defaults to 'default'.",
-                        "default": "default",
-                    },
-                    "container": {
-                        "type": "string",
-                        "description": "Container name (uses first container if not specified)",
-                    },
-                },
-                "required": ["pod_name", "command"],
             },
         }
     },
@@ -364,3 +333,41 @@ TESTING_TOOLS = [
         }
     },
 ]
+
+# Mutating testing tools - these can modify state and require approval
+MUTATING_TESTING_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "exec_in_pod",
+            "description": "Execute a command inside a pod for testing or verification. Useful for checking connectivity, running tests, etc.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pod_name": {
+                        "type": "string",
+                        "description": "Name of the pod to execute command in",
+                    },
+                    "command": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Command to execute as an array (e.g., ['curl', 'http://google.com'])",
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "Namespace the pod is in. Defaults to 'default'.",
+                        "default": "default",
+                    },
+                    "container": {
+                        "type": "string",
+                        "description": "Container name (uses first container if not specified)",
+                    },
+                },
+                "required": ["pod_name", "command"],
+            },
+        }
+    },
+]
+
+# Combined tools for backward compatibility
+TESTING_TOOLS = READ_ONLY_TESTING_TOOLS + MUTATING_TESTING_TOOLS

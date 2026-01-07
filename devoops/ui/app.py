@@ -94,6 +94,38 @@ def mission_proxy(mission_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/missions/<mission_id>/respond", methods=["POST"])
+@login_required
+def respond_proxy(mission_id):
+    """Proxy clarification response to the agent."""
+    try:
+        response = requests.post(
+            f"{AGENT_URL}/api/missions/{mission_id}/respond",
+            json=request.get_json(),
+            timeout=10
+        )
+        return response.json(), response.status_code
+    except Exception as e:
+        logger.error(f"Failed to proxy respond request to agent: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/missions/<mission_id>/approve", methods=["POST"])
+@login_required
+def approve_proxy(mission_id):
+    """Proxy plan approval to the agent."""
+    try:
+        response = requests.post(
+            f"{AGENT_URL}/api/missions/{mission_id}/approve",
+            json=request.get_json(),
+            timeout=10
+        )
+        return response.json(), response.status_code
+    except Exception as e:
+        logger.error(f"Failed to proxy approve request to agent: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/me")
 @login_required
 def get_current_user():

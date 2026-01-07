@@ -5,12 +5,13 @@ import json
 import logging
 import threading
 import time
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 from openai import OpenAI
-from devoops.k8s_tools import K8sClient, TOOLS
-from devoops.test_tools import TestingClient, TESTING_TOOLS
+from devoops.k8s_tools import K8sClient, READ_ONLY_TOOLS, MUTATING_TOOLS
+from devoops.test_tools import TestingClient, READ_ONLY_TESTING_TOOLS, MUTATING_TESTING_TOOLS
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,8 +24,111 @@ class MissionStatus(str, Enum):
     """Status of a mission."""
     PENDING = "pending"
     RUNNING = "running"
+    AWAITING_CLARIFICATION = "awaiting_clarification"
+    AWAITING_APPROVAL = "awaiting_approval"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class InteractionType(str, Enum):
+    """Type of user interaction required."""
+    CLARIFICATION = "clarification"
+    PLAN_APPROVAL = "plan_approval"
+
+
+@dataclass
+class PlannedAction:
+    """A single planned mutating action."""
+    tool_name: str
+    description: str
+    parameters: dict
+    risk_level: str = "medium"  # low, medium, high
+
+    def to_dict(self) -> dict:
+        return {
+            "tool_name": self.tool_name,
+            "description": self.description,
+            "parameters": self.parameters,
+            "risk_level": self.risk_level,
+        }
+
+
+@dataclass
+class PendingInteraction:
+    """Represents a pending interaction requiring user input."""
+    interaction_type: InteractionType
+    message: str
+    planned_actions: List[PlannedAction] = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.utcnow)
+
+    def to_dict(self) -> dict:
+        return {
+            "interaction_type": self.interaction_type.value,
+            "message": self.message,
+            "planned_actions": [a.to_dict() for a in self.planned_actions],
+            "created_at": self.created_at.isoformat(),
+        }
+
+
+# Interaction tools for human-in-the-loop
+INTERACTION_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "request_clarification",
+            "description": "Request clarification from the user when the mission is ambiguous or you need more information. Use sparingly - try to be autonomous when possible.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "The clarifying question to ask the user"
+                    }
+                },
+                "required": ["question"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_mutation_plan",
+            "description": "Propose a plan of mutating actions for user approval. MUST be called before executing any mutating operations (scale_deployment, apply_manifest, delete_resource, exec_in_pod). Batch multiple related actions into a single plan.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "Brief summary of what the plan will accomplish"
+                    },
+                    "actions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "tool": {
+                                    "type": "string",
+                                    "description": "The tool to execute (scale_deployment, apply_manifest, delete_resource, exec_in_pod)"
+                                },
+                                "description": {
+                                    "type": "string",
+                                    "description": "Human-readable description of this action"
+                                },
+                                "parameters": {
+                                    "type": "object",
+                                    "description": "Parameters for the tool"
+                                }
+                            },
+                            "required": ["tool", "description", "parameters"]
+                        },
+                        "description": "List of actions in the plan"
+                    }
+                },
+                "required": ["summary", "actions"]
+            }
+        }
+    }
+]
 
 
 class Mission:
@@ -40,6 +144,13 @@ class Mission:
         self.started_at: Optional[datetime] = None
         self.completed_at: Optional[datetime] = None
         self.error: Optional[str] = None
+
+        # Human-in-the-loop fields
+        self.pending_interaction: Optional[PendingInteraction] = None
+        self.conversation_history: List[dict] = []
+        self.plan_approved: bool = False
+        self._pending_tool_call_id: Optional[str] = None
+        self._resume_flag: bool = False
 
     def add_log(self, message: str):
         """Add a log entry with timestamp."""
@@ -60,6 +171,8 @@ class Mission:
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "pending_interaction": self.pending_interaction.to_dict() if self.pending_interaction else None,
+            "plan_approved": self.plan_approved,
         }
 
 
@@ -78,8 +191,15 @@ class DevoopsAgent:
         self.testing = TestingClient(core_v1=self.k8s.core_v1)
         self.model = "gpt-4o"
 
-        # Tools are already in OpenAI format
-        self.tools = TOOLS + TESTING_TOOLS
+        # Tool sets for human-in-the-loop
+        self.read_only_tools = READ_ONLY_TOOLS + READ_ONLY_TESTING_TOOLS + INTERACTION_TOOLS
+        self.mutating_tools = MUTATING_TOOLS + MUTATING_TESTING_TOOLS
+        self.all_tools = self.read_only_tools + self.mutating_tools
+
+        # Mutating tool names for validation
+        self.mutating_tool_names = {
+            "scale_deployment", "apply_manifest", "delete_resource", "exec_in_pod"
+        }
 
         # Mission storage (in-memory)
         self.missions: Dict[str, Mission] = {}
@@ -87,17 +207,6 @@ class DevoopsAgent:
         self.lock = threading.Lock()
         self.worker_thread: Optional[threading.Thread] = None
         self.running = False
-
-        # System prompt to encourage testing
-        self.system_prompt = """You are a DevOps agent with the ability to manage Kubernetes resources and test your changes.
-
-IMPORTANT: After making changes (creating/updating resources), you should verify they work correctly:
-1. Use wait_for_pod_ready to ensure pods are running before testing
-2. Use check_service_endpoints to verify services have backing pods
-3. Use http_request to test HTTP endpoints
-4. Use exec_in_pod to run commands inside pods for verification
-
-Always test your changes when possible to ensure the mission succeeded."""
 
     def submit_mission(self, prompt: str) -> str:
         """Submit a new mission and return its ID.
@@ -158,57 +267,113 @@ Always test your changes when possible to ensure the mission succeeded."""
         """Background worker that processes pending missions."""
         logger.info("Worker loop started")
         while self.running:
-            # Find next pending mission
-            pending_mission = None
+            # Find next pending mission or one that needs to resume
+            active_mission = None
             with self.lock:
                 for mission in self.missions.values():
                     if mission.status == MissionStatus.PENDING:
-                        pending_mission = mission
+                        active_mission = mission
                         mission.status = MissionStatus.RUNNING
                         mission.started_at = datetime.utcnow()
                         break
+                    # Resume missions that were waiting and got a response
+                    elif mission._resume_flag:
+                        active_mission = mission
+                        mission._resume_flag = False
+                        mission.status = MissionStatus.RUNNING
+                        break
 
-            if pending_mission:
+            if active_mission:
                 try:
-                    pending_mission.add_log("Starting mission execution")
-                    result = self._execute_mission_internal(pending_mission)
-                    pending_mission.result = result
-                    pending_mission.status = MissionStatus.COMPLETED
-                    pending_mission.completed_at = datetime.utcnow()
-                    pending_mission.add_log("Mission completed successfully")
+                    active_mission.add_log("Executing mission")
+                    result = self._execute_mission_internal(active_mission)
+
+                    if result is None:
+                        # Mission paused for user interaction, don't mark as complete
+                        active_mission.add_log("Mission paused awaiting user input")
+                        continue
+
+                    active_mission.result = result
+                    active_mission.status = MissionStatus.COMPLETED
+                    active_mission.completed_at = datetime.utcnow()
+                    active_mission.add_log("Mission completed successfully")
                 except Exception as e:
                     error_msg = str(e)
-                    pending_mission.error = error_msg
-                    pending_mission.status = MissionStatus.FAILED
-                    pending_mission.completed_at = datetime.utcnow()
-                    pending_mission.add_log(f"Mission failed: {error_msg}")
-                    logger.error(f"Mission {pending_mission.id} failed", exc_info=True)
+                    active_mission.error = error_msg
+                    active_mission.status = MissionStatus.FAILED
+                    active_mission.completed_at = datetime.utcnow()
+                    active_mission.add_log(f"Mission failed: {error_msg}")
+                    logger.error(f"Mission {active_mission.id} failed", exc_info=True)
             else:
                 # No pending missions, sleep briefly
                 time.sleep(1)
 
         logger.info("Worker loop exited")
 
-    def _execute_mission_internal(self, mission: Mission) -> str:
-        """Execute a mission (internal method called by worker).
+    def _get_system_prompt(self, mission: Mission) -> str:
+        """Get the system prompt based on mission state."""
+        base_prompt = """You are a DevOps agent with the ability to manage Kubernetes resources and test your changes.
+
+IMPORTANT GUIDELINES:
+
+1. AUTONOMY: Try to complete missions autonomously. Only request clarification when the mission is genuinely ambiguous or missing critical information.
+
+2. MUTATION APPROVAL: Before executing ANY mutating operation (scale_deployment, apply_manifest, delete_resource, exec_in_pod), you MUST call propose_mutation_plan with a summary and list of actions. Wait for user approval before proceeding.
+
+3. BATCHING: Batch related mutating actions into a single plan when possible. For example, if deploying an application, include all manifests (Deployment, Service, ConfigMap) in one plan.
+
+4. VERIFICATION: After making changes, verify they work correctly:
+   - Use wait_for_pod_ready to ensure pods are running
+   - Use check_service_endpoints to verify services
+   - Use http_request to test HTTP endpoints
+
+5. READ OPERATIONS: You can freely use read-only tools (list_pods, get_pod_logs, describe_pod, list_deployments, list_namespaces, get_resource, http_request, wait_for_pod_ready, check_service_endpoints) without approval."""
+
+        if mission.plan_approved:
+            base_prompt += "\n\nNOTE: Your mutation plan has been APPROVED. You may now execute the planned actions."
+
+        return base_prompt
+
+    def _assess_risk(self, tool_name: str, parameters: dict) -> str:
+        """Assess risk level of an action."""
+        if tool_name == "delete_resource":
+            return "high"
+        if tool_name == "apply_manifest":
+            return "medium"
+        if tool_name == "scale_deployment":
+            replicas = parameters.get("replicas", 1)
+            return "high" if replicas == 0 else "low"
+        if tool_name == "exec_in_pod":
+            return "medium"
+        return "medium"
+
+    def _execute_mission_internal(self, mission: Mission) -> Optional[str]:
+        """Execute a mission with human-in-the-loop support.
 
         Args:
             mission: The mission to execute
 
         Returns:
-            The final response from the agent
+            The final response from the agent, or None if awaiting user input
         """
-        messages = [
-            {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": mission.prompt}
-        ]
+        # Resume from stored conversation or start fresh
+        if mission.conversation_history:
+            messages = mission.conversation_history
+        else:
+            messages = [
+                {"role": "system", "content": self._get_system_prompt(mission)},
+                {"role": "user", "content": mission.prompt}
+            ]
 
         # Agentic loop
         while True:
+            # Select tools based on approval state
+            tools = self.all_tools if mission.plan_approved else self.read_only_tools
+
             response = self.client.chat.completions.create(
                 model=self.model,
                 max_tokens=4096,
-                tools=self.tools,
+                tools=tools,
                 messages=messages,
             )
 
@@ -219,6 +384,7 @@ Always test your changes when possible to ensure the mission succeeded."""
 
             # Add assistant response to conversation
             messages.append(message)
+            mission.conversation_history = messages
 
             # Check if we're done
             if finish_reason == "stop":
@@ -233,30 +399,68 @@ Always test your changes when possible to ensure the mission succeeded."""
                     tool_name = tool_call.function.name
                     tool_input = json.loads(tool_call.function.arguments)
 
-                    mission.add_log(f"Executing tool: {tool_name}")
+                    mission.add_log(f"Tool call: {tool_name}")
 
-                    # Execute the tool
-                    try:
-                        result = self._execute_tool(tool_name, tool_input)
-                        result_preview = result[:200] if len(result) > 200 else result
-                        mission.add_log(f"Tool result: {result_preview}...")
+                    # Handle interaction tools specially
+                    if tool_name == "request_clarification":
+                        question = tool_input.get("question", "")
+                        mission.pending_interaction = PendingInteraction(
+                            interaction_type=InteractionType.CLARIFICATION,
+                            message=question,
+                            planned_actions=[]
+                        )
+                        mission.status = MissionStatus.AWAITING_CLARIFICATION
+                        mission._pending_tool_call_id = tool_call.id
+                        mission.add_log(f"Requesting clarification: {question}")
+                        return None  # Pause execution
 
-                        tool_messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": result,
+                    if tool_name == "propose_mutation_plan":
+                        summary = tool_input.get("summary", "")
+                        actions = tool_input.get("actions", [])
+                        planned_actions = [
+                            PlannedAction(
+                                tool_name=a.get("tool", ""),
+                                description=a.get("description", ""),
+                                parameters=a.get("parameters", {}),
+                                risk_level=self._assess_risk(a.get("tool", ""), a.get("parameters", {}))
+                            )
+                            for a in actions
+                        ]
+                        mission.pending_interaction = PendingInteraction(
+                            interaction_type=InteractionType.PLAN_APPROVAL,
+                            message=summary,
+                            planned_actions=planned_actions
+                        )
+                        mission.status = MissionStatus.AWAITING_APPROVAL
+                        mission._pending_tool_call_id = tool_call.id
+                        mission.add_log(f"Proposing plan: {summary}")
+                        return None  # Pause execution
+
+                    # Safety check: reject mutating tools if not approved
+                    if tool_name in self.mutating_tool_names and not mission.plan_approved:
+                        result = json.dumps({
+                            "error": "Mutating operations require user approval. Use propose_mutation_plan first."
                         })
-                    except Exception as e:
-                        error_msg = f"Error executing tool: {str(e)}"
-                        mission.add_log(error_msg)
-                        tool_messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": error_msg,
-                        })
+                        mission.add_log(f"Blocked unapproved mutation: {tool_name}")
+                    else:
+                        # Execute the tool
+                        try:
+                            result = self._execute_tool(tool_name, tool_input)
+                            result_preview = result[:200] if len(result) > 200 else result
+                            mission.add_log(f"Tool result: {result_preview}...")
+                        except Exception as e:
+                            result = f"Error executing tool: {str(e)}"
+                            mission.add_log(result)
+
+                    tool_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": result,
+                    })
 
                 # Add tool results to conversation
                 messages.extend(tool_messages)
+                mission.conversation_history = messages
 
             else:
                 # Unexpected finish reason
@@ -419,6 +623,86 @@ def create_flask_app(agent: DevoopsAgent):
         mission = agent.get_mission(mission_id)
         if not mission:
             return jsonify({"error": "Mission not found"}), 404
+
+        return jsonify(mission.to_dict()), 200
+
+    @app.route("/api/missions/<mission_id>/respond", methods=["POST"])
+    def respond_to_mission(mission_id):
+        """Handle user response to clarification request."""
+        mission = agent.get_mission(mission_id)
+        if not mission:
+            return jsonify({"error": "Mission not found"}), 404
+
+        if mission.status != MissionStatus.AWAITING_CLARIFICATION:
+            return jsonify({"error": "Mission is not awaiting clarification"}), 400
+
+        data = request.get_json()
+        if not data or "response" not in data:
+            return jsonify({"error": "Missing 'response' field"}), 400
+
+        user_response = data["response"]
+
+        # Add user response to conversation as tool result
+        messages = mission.conversation_history
+        messages.append({
+            "role": "tool",
+            "tool_call_id": mission._pending_tool_call_id,
+            "content": json.dumps({"user_response": user_response})
+        })
+        mission.conversation_history = messages
+
+        # Clear pending interaction and trigger resume
+        mission.pending_interaction = None
+        mission._resume_flag = True
+        mission.add_log(f"User responded: {user_response}")
+
+        return jsonify(mission.to_dict()), 200
+
+    @app.route("/api/missions/<mission_id>/approve", methods=["POST"])
+    def approve_plan(mission_id):
+        """Handle user approval/rejection of mutation plan."""
+        mission = agent.get_mission(mission_id)
+        if not mission:
+            return jsonify({"error": "Mission not found"}), 404
+
+        if mission.status != MissionStatus.AWAITING_APPROVAL:
+            return jsonify({"error": "Mission is not awaiting approval"}), 400
+
+        data = request.get_json()
+        if not data or "approved" not in data:
+            return jsonify({"error": "Missing 'approved' field"}), 400
+
+        approved = data["approved"]
+        messages = mission.conversation_history
+
+        if approved:
+            # Grant approval
+            mission.plan_approved = True
+            messages.append({
+                "role": "tool",
+                "tool_call_id": mission._pending_tool_call_id,
+                "content": json.dumps({
+                    "approved": True,
+                    "message": "Plan approved. You may now execute the planned actions."
+                })
+            })
+            mission.add_log("User APPROVED the mutation plan")
+        else:
+            # Rejection with reason
+            rejection_reason = data.get("rejection_reason", "Plan rejected by user")
+            messages.append({
+                "role": "tool",
+                "tool_call_id": mission._pending_tool_call_id,
+                "content": json.dumps({
+                    "approved": False,
+                    "message": f"Plan rejected: {rejection_reason}"
+                })
+            })
+            mission.add_log(f"User REJECTED the plan: {rejection_reason}")
+
+        mission.conversation_history = messages
+        mission.pending_interaction = None
+        mission._resume_flag = True
 
         return jsonify(mission.to_dict()), 200
 

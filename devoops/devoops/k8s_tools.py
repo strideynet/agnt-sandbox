@@ -419,8 +419,8 @@ class K8sClient:
             }, indent=2)
 
 
-# Tool definitions for OpenAI API
-TOOLS = [
+# Read-only tool definitions for OpenAI API
+READ_ONLY_TOOLS = [
     {
         "type": "function",
         "function": {
@@ -507,6 +507,51 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "list_namespaces",
+            "description": "List all namespaces in the cluster.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_resource",
+            "description": "Get detailed information about any Kubernetes resource by kind and name.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "description": "Resource kind (e.g., Pod, Deployment, Service)"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Resource name"
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "Namespace (ignored for cluster-scoped resources). Defaults to 'default'.",
+                        "default": "default"
+                    },
+                    "api_version": {
+                        "type": "string",
+                        "description": "API version. Will be inferred if not provided."
+                    }
+                },
+                "required": ["kind", "name"]
+            }
+        }
+    },
+]
+
+# Mutating tool definitions - these require user approval before execution
+MUTATING_TOOLS = [
+    {
+        "type": "function",
+        "function": {
             "name": "scale_deployment",
             "description": "Scale a deployment to a specific number of replicas. Use with caution as this modifies cluster state.",
             "parameters": {
@@ -527,17 +572,6 @@ TOOLS = [
                     }
                 },
                 "required": ["name", "replicas"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_namespaces",
-            "description": "List all namespaces in the cluster.",
-            "parameters": {
-                "type": "object",
-                "properties": {}
             }
         }
     },
@@ -593,34 +627,7 @@ TOOLS = [
             }
         }
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_resource",
-            "description": "Get detailed information about any Kubernetes resource by kind and name.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "kind": {
-                        "type": "string",
-                        "description": "Resource kind (e.g., Pod, Deployment, Service)"
-                    },
-                    "name": {
-                        "type": "string",
-                        "description": "Resource name"
-                    },
-                    "namespace": {
-                        "type": "string",
-                        "description": "Namespace (ignored for cluster-scoped resources). Defaults to 'default'.",
-                        "default": "default"
-                    },
-                    "api_version": {
-                        "type": "string",
-                        "description": "API version. Will be inferred if not provided."
-                    }
-                },
-                "required": ["kind", "name"]
-            }
-        }
-    },
 ]
+
+# Combined tools for backward compatibility
+TOOLS = READ_ONLY_TOOLS + MUTATING_TOOLS

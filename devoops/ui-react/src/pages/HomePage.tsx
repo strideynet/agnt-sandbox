@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../api/client';
 import type { Mission } from '../types/mission';
 
@@ -8,13 +8,6 @@ export function HomePage() {
   const [missionPrompt, setMissionPrompt] = useState('');
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-
-  // Fetch current user
-  const { data: user } = useQuery({
-    queryKey: ['currentUser'],
-    queryFn: () => apiClient.getCurrentUser(),
-    staleTime: 60000, // Cache for 1 minute
-  });
 
   // Fetch missions with polling every 500ms
   const { data: missions = [], isLoading, error } = useQuery({
@@ -52,6 +45,10 @@ export function HomePage() {
         return 'border-red-500';
       case 'running':
         return 'border-yellow-500';
+      case 'awaiting_clarification':
+        return 'border-amber-500';
+      case 'awaiting_approval':
+        return 'border-blue-500';
       default:
         return 'border-blue-500';
     }
@@ -65,8 +62,23 @@ export function HomePage() {
         return 'bg-red-100 text-red-800';
       case 'running':
         return 'bg-yellow-100 text-yellow-800';
+      case 'awaiting_clarification':
+        return 'bg-amber-100 text-amber-800';
+      case 'awaiting_approval':
+        return 'bg-blue-100 text-blue-800';
       default:
         return 'bg-blue-100 text-blue-800';
+    }
+  };
+
+  const getStatusLabel = (status: Mission['status']) => {
+    switch (status) {
+      case 'awaiting_clarification':
+        return 'needs input';
+      case 'awaiting_approval':
+        return 'needs approval';
+      default:
+        return status;
     }
   };
 
@@ -90,28 +102,12 @@ export function HomePage() {
             </p>
           </div>
           <div className="text-right">
-            {user && (
-              <>
-                <p className="text-gray-600 m-0">
-                  Logged in as: <strong>{user.username}</strong>
-                </p>
-                <p className="text-gray-400 text-sm mt-1 mb-0">{user.email}</p>
-              </>
-            )}
-            <div className="mt-2 space-x-3">
-              <Link
-                to="/auth"
-                className="text-blue-600 hover:underline text-sm"
-              >
-                Auth Info
-              </Link>
-              <button
-                onClick={handleLogout}
-                className="text-blue-600 hover:underline text-sm"
-              >
-                Logout
-              </button>
-            </div>
+            <button
+              onClick={handleLogout}
+              className="text-blue-600 hover:underline text-sm"
+            >
+              Logout
+            </button>
           </div>
         </div>
 
@@ -184,7 +180,7 @@ export function HomePage() {
                         mission.status
                       )}`}
                     >
-                      {mission.status}
+                      {getStatusLabel(mission.status)}
                     </span>
                   </div>
                   <div className="italic text-gray-600 text-sm my-2">

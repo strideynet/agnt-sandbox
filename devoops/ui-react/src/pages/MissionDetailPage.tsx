@@ -1,12 +1,15 @@
 import { useEffect, useRef } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
 import { apiClient } from '../api/client';
+import { ClarificationInput } from '../components/ClarificationInput';
+import { PlanApproval } from '../components/PlanApproval';
 import type { Mission } from '../types/mission';
 
 export function MissionDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   const { data: mission, isLoading, error } = useQuery({
@@ -20,6 +23,29 @@ export function MissionDetailPage() {
         return false;
       }
       return 500;
+    },
+  });
+
+  // Mutations for user interactions
+  const respondMutation = useMutation({
+    mutationFn: (response: string) =>
+      apiClient.respondToClarification(id!, response),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mission', id] });
+    },
+  });
+
+  const approveMutation = useMutation({
+    mutationFn: () => apiClient.approvePlan(id!),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mission', id] });
+    },
+  });
+
+  const rejectMutation = useMutation({
+    mutationFn: (reason: string) => apiClient.rejectPlan(id!, reason),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mission', id] });
     },
   });
 
@@ -49,7 +75,7 @@ export function MissionDetailPage() {
             onClick={() => navigate('/')}
             className="mt-4 px-6 py-3 bg-blue-600 text-white rounded font-medium hover:bg-blue-700"
           >
-            ← Back to Mission Control
+            Back to Mission Control
           </button>
         </div>
       </div>
@@ -68,8 +94,23 @@ export function MissionDetailPage() {
         return 'bg-red-100 text-red-800';
       case 'running':
         return 'bg-yellow-100 text-yellow-800';
+      case 'awaiting_clarification':
+        return 'bg-amber-100 text-amber-800';
+      case 'awaiting_approval':
+        return 'bg-blue-100 text-blue-800';
       default:
         return 'bg-blue-100 text-blue-800';
+    }
+  };
+
+  const getStatusLabel = (status: Mission['status']) => {
+    switch (status) {
+      case 'awaiting_clarification':
+        return 'awaiting clarification';
+      case 'awaiting_approval':
+        return 'awaiting approval';
+      default:
+        return status;
     }
   };
 
@@ -83,9 +124,11 @@ export function MissionDetailPage() {
               mission.status
             )}`}
           >
-            {mission.status}
-            {mission.status === 'running' && (
-              <span className="inline-block w-3.5 h-3.5 border-2 border-yellow-800 border-t-transparent rounded-full animate-spin"></span>
+            {getStatusLabel(mission.status)}
+            {(mission.status === 'running' ||
+              mission.status === 'awaiting_clarification' ||
+              mission.status === 'awaiting_approval') && (
+              <span className="inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
             )}
           </span>
         </div>
@@ -113,10 +156,29 @@ export function MissionDetailPage() {
           </p>
         </div>
 
+        {/* Clarification Request UI */}
+        {mission.status === 'awaiting_clarification' && mission.pending_interaction && (
+          <ClarificationInput
+            interaction={mission.pending_interaction}
+            onSubmit={(response) => respondMutation.mutate(response)}
+            isSubmitting={respondMutation.isPending}
+          />
+        )}
+
+        {/* Plan Approval UI */}
+        {mission.status === 'awaiting_approval' && mission.pending_interaction && (
+          <PlanApproval
+            interaction={mission.pending_interaction}
+            onApprove={() => approveMutation.mutate()}
+            onReject={(reason) => rejectMutation.mutate(reason)}
+            isSubmitting={approveMutation.isPending || rejectMutation.isPending}
+          />
+        )}
+
         {mission.result && (
           <div className="bg-green-50 border-l-4 border-green-500 p-5 mb-5 rounded">
             <h3 className="font-semibold text-green-800 mb-2">
-              ✓ Mission Result:
+              Mission Result:
             </h3>
             <div className="whitespace-pre-wrap text-green-800">
               {mission.result}
@@ -126,7 +188,7 @@ export function MissionDetailPage() {
 
         {mission.error && (
           <div className="bg-red-50 border-l-4 border-red-500 p-5 mb-5 rounded">
-            <h3 className="font-semibold text-red-800 mb-2">✗ Error:</h3>
+            <h3 className="font-semibold text-red-800 mb-2">Error:</h3>
             <div className="whitespace-pre-wrap text-red-800">
               {mission.error}
             </div>
@@ -154,7 +216,7 @@ export function MissionDetailPage() {
             onClick={() => navigate('/')}
             className="px-6 py-3 bg-blue-600 text-white rounded font-medium hover:bg-blue-700"
           >
-            ← Back to Mission Control
+            Back to Mission Control
           </button>
         </p>
       </div>
