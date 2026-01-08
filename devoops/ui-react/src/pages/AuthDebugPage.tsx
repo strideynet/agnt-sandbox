@@ -1,5 +1,4 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
 import { apiClient } from '../api/client';
 
 interface JwtClaims {
@@ -86,33 +85,16 @@ export function AuthDebugPage() {
     queryFn: () => apiClient.getCurrentUser(),
   });
 
-  const handleLogout = () => {
-    apiClient.initiateLogout();
-  };
-
   return (
-    <div className="min-h-screen bg-gray-100 py-12 px-5">
+    <div className="py-12 px-5">
       <div className="max-w-4xl mx-auto bg-white rounded-lg shadow-md p-10">
-        <div className="flex justify-between items-start mb-8">
-          <div>
-            <h1 className="text-3xl font-semibold text-gray-800 mb-2">
-              Authentication Debug
-            </h1>
-            <p className="text-gray-600">
-              View your current authentication state and token claims
-            </p>
-          </div>
-          <div className="space-x-3">
-            <Link to="/" className="text-blue-600 hover:underline text-sm">
-              Back to Home
-            </Link>
-            <button
-              onClick={handleLogout}
-              className="text-blue-600 hover:underline text-sm"
-            >
-              Logout
-            </button>
-          </div>
+        <div className="mb-8">
+          <h1 className="text-3xl font-semibold text-gray-800 mb-2">
+            Authentication Debug
+          </h1>
+          <p className="text-gray-600">
+            View your current authentication state and token claims
+          </p>
         </div>
 
         {isLoading && <p className="text-gray-400">Loading user info...</p>}

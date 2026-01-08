@@ -4,6 +4,7 @@ import { LoginPage } from './pages/LoginPage';
 import { HomePage } from './pages/HomePage';
 import { MissionDetailPage } from './pages/MissionDetailPage';
 import { AuthDebugPage } from './pages/AuthDebugPage';
+import { AppLayout } from './components/AppLayout';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -20,9 +21,12 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login-page" element={<LoginPage />} />
-          <Route path="/" element={<HomePage />} />
-          <Route path="/missions/:id" element={<MissionDetailPage />} />
-          <Route path="/auth" element={<AuthDebugPage />} />
+          {/* Routes with app header */}
+          <Route element={<AppLayout />}>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/missions/:id" element={<MissionDetailPage />} />
+            <Route path="/auth" element={<AuthDebugPage />} />
+          </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

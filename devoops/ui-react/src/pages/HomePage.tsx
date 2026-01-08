@@ -33,10 +33,6 @@ export function HomePage() {
     }
   };
 
-  const handleLogout = () => {
-    apiClient.initiateLogout();
-  };
-
   const getStatusColor = (status: Mission['status']) => {
     switch (status) {
       case 'completed':
@@ -89,26 +85,15 @@ export function HomePage() {
   });
 
   return (
-    <div className="min-h-screen bg-gray-100 py-12 px-5">
+    <div className="py-12 px-5">
       <div className="max-w-6xl mx-auto bg-white rounded-lg shadow-md p-10">
-        <div className="flex justify-between items-start mb-5">
-          <div>
-            <h1 className="text-3xl font-semibold text-gray-800 mb-2 flex items-center gap-2">
-              <span className="text-4xl">🤖</span>
-              Devoops Mission Control
-            </h1>
-            <p className="text-gray-600">
-              Submit DevOps missions to your Kubernetes agent
-            </p>
-          </div>
-          <div className="text-right">
-            <button
-              onClick={handleLogout}
-              className="text-blue-600 hover:underline text-sm"
-            >
-              Logout
-            </button>
-          </div>
+        <div className="mb-5">
+          <h1 className="text-3xl font-semibold text-gray-800 mb-2">
+            Mission Control
+          </h1>
+          <p className="text-gray-600">
+            Submit DevOps missions to your Kubernetes agent
+          </p>
         </div>
 
         <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-5">

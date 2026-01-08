@@ -93,7 +93,7 @@ INTERACTION_TOOLS = [
         "type": "function",
         "function": {
             "name": "propose_mutation_plan",
-            "description": "Propose a plan of mutating actions for user approval. MUST be called before executing any mutating operations (scale_deployment, apply_manifest, delete_resource, exec_in_pod). Batch multiple related actions into a single plan.",
+            "description": "Propose a plan of mutating actions for user approval. MUST be called before executing any mutating operations (scale_deployment, apply_manifest, delete_resource, exec_in_pod). Batch multiple related actions into a single plan. IMPORTANT: You must include the COMPLETE parameters for each action, including full YAML manifests for apply_manifest.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -116,12 +116,12 @@ INTERACTION_TOOLS = [
                                 },
                                 "parameters": {
                                     "type": "object",
-                                    "description": "Parameters for the tool"
+                                    "description": "The COMPLETE parameters to pass to the tool. For apply_manifest, include the full yaml_content. For scale_deployment, include name, replicas, namespace. These exact parameters will be used when executing the action."
                                 }
                             },
                             "required": ["tool", "description", "parameters"]
                         },
-                        "description": "List of actions in the plan"
+                        "description": "List of actions in the plan with their complete parameters"
                     }
                 },
                 "required": ["summary", "actions"]
@@ -316,18 +316,30 @@ class DevoopsAgent:
 
 IMPORTANT GUIDELINES:
 
-1. AUTONOMY: Try to complete missions autonomously. Only request clarification when the mission is genuinely ambiguous or missing critical information.
+1. AUTONOMY: Complete missions autonomously using sensible defaults. Use the 'default' namespace unless specified otherwise. Do NOT ask questions about namespace choices or other details that have reasonable defaults - just proceed with the default and let the user know what you chose.
 
 2. MUTATION APPROVAL: Before executing ANY mutating operation (scale_deployment, apply_manifest, delete_resource, exec_in_pod), you MUST call propose_mutation_plan with a summary and list of actions. Wait for user approval before proceeding.
 
-3. BATCHING: Batch related mutating actions into a single plan when possible. For example, if deploying an application, include all manifests (Deployment, Service, ConfigMap) in one plan.
+3. COMPLETE PARAMETERS IN PLANS: When calling propose_mutation_plan, you MUST include the COMPLETE parameters for each action. For apply_manifest, this means including the full YAML manifest in the yaml_content field. The user needs to see exactly what will be applied. Example:
+   {
+     "tool": "apply_manifest",
+     "description": "Create nginx Deployment",
+     "parameters": {
+       "yaml_content": "apiVersion: apps/v1\\nkind: Deployment\\nmetadata:\\n  name: nginx\\n...",
+       "namespace": "default"
+     }
+   }
 
-4. VERIFICATION: After making changes, verify they work correctly:
+4. BATCHING: Batch related mutating actions into a single plan when possible. For example, if deploying an application, include all manifests (Deployment, Service, ConfigMap) in one plan.
+
+5. VERIFICATION: After making changes, verify they work correctly:
    - Use wait_for_pod_ready to ensure pods are running
    - Use check_service_endpoints to verify services
    - Use http_request to test HTTP endpoints
 
-5. READ OPERATIONS: You can freely use read-only tools (list_pods, get_pod_logs, describe_pod, list_deployments, list_namespaces, get_resource, http_request, wait_for_pod_ready, check_service_endpoints) without approval."""
+6. READ OPERATIONS: You can freely use read-only tools (list_pods, get_pod_logs, describe_pod, list_deployments, list_namespaces, get_resource, http_request, wait_for_pod_ready, check_service_endpoints) without approval.
+
+7. CLARIFICATION: If you genuinely need user input (e.g., the mission is truly ambiguous with no reasonable default), use the request_clarification tool. NEVER ask questions in your final response text - either use request_clarification tool or proceed with a sensible default."""
 
         if mission.plan_approved:
             base_prompt += "\n\nNOTE: Your mutation plan has been APPROVED. You may now execute the planned actions."

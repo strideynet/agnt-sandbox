@@ -1,0 +1,46 @@
+import { Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { apiClient } from '../api/client';
+
+export function AppHeader() {
+  const { data: user } = useQuery({
+    queryKey: ['currentUser'],
+    queryFn: () => apiClient.getCurrentUser(),
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+    retry: false,
+  });
+
+  const handleLogout = () => {
+    apiClient.initiateLogout();
+  };
+
+  return (
+    <header className="bg-white border-b border-gray-200 shadow-sm">
+      <div className="max-w-6xl mx-auto px-5 py-3 flex justify-between items-center">
+        <Link to="/" className="flex items-center gap-2 text-gray-800 hover:text-gray-600">
+          <span className="text-2xl">🤖</span>
+          <span className="font-semibold text-lg">Devoops</span>
+        </Link>
+
+        <div className="flex items-center gap-4">
+          {user && (
+            <>
+              <Link
+                to="/auth"
+                className="text-gray-600 hover:text-gray-800 text-sm"
+              >
+                {user.email}
+              </Link>
+              <button
+                onClick={handleLogout}
+                className="text-blue-600 hover:underline text-sm"
+              >
+                Logout
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </header>
+  );
+}

@@ -4,6 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { apiClient } from '../api/client';
 import { ClarificationInput } from '../components/ClarificationInput';
 import { PlanApproval } from '../components/PlanApproval';
+import { Markdown } from '../components/Markdown';
 import type { Mission } from '../types/mission';
 
 export function MissionDetailPage() {
@@ -58,7 +59,7 @@ export function MissionDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-100 py-12 px-5">
+      <div className="py-12 px-5">
         <div className="max-w-6xl mx-auto bg-white rounded-lg shadow-md p-10">
           <p className="text-gray-400">Loading mission...</p>
         </div>
@@ -68,7 +69,7 @@ export function MissionDetailPage() {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-100 py-12 px-5">
+      <div className="py-12 px-5">
         <div className="max-w-6xl mx-auto bg-white rounded-lg shadow-md p-10">
           <p className="text-red-600">Error loading mission: {String(error)}</p>
           <button
@@ -115,7 +116,7 @@ export function MissionDetailPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 py-12 px-5">
+    <div className="py-12 px-5">
       <div className="max-w-6xl mx-auto bg-white rounded-lg shadow-md p-10">
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-3xl font-semibold text-gray-800">{mission.id}</h1>
@@ -180,8 +181,8 @@ export function MissionDetailPage() {
             <h3 className="font-semibold text-green-800 mb-2">
               Mission Result:
             </h3>
-            <div className="whitespace-pre-wrap text-green-800">
-              {mission.result}
+            <div className="text-green-800">
+              <Markdown>{mission.result}</Markdown>
             </div>
           </div>
         )}
