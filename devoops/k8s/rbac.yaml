@@ -1,9 +1,49 @@
 ---
 # ClusterRole defining what the agent can do
+# The agent only needs impersonation permissions - actual K8s resource access
+# is granted via the devoops-users group that impersonated users belong to
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: devoops-agent
+rules:
+  # Allow impersonating any user (for audit trail - K8s logs show which user triggered each action)
+  - apiGroups: [""]
+    resources:
+      - users
+    verbs:
+      - impersonate
+
+  # Allow impersonating only the devoops-users group (for RBAC permissions)
+  - apiGroups: [""]
+    resources:
+      - groups
+    resourceNames:
+      - devoops-users
+    verbs:
+      - impersonate
+
+---
+# Bind the role to the ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: devoops-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: devoops-agent
+subjects:
+  - kind: ServiceAccount
+    name: devoops-agent
+    namespace: devoops
+
+---
+# ClusterRole for devoops users (permissions granted via group impersonation)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: devoops-users
 rules:
   # Read-only access to core resources
   - apiGroups: [""]
@@ -73,16 +113,17 @@ rules:
       - delete
 
 ---
-# Bind the role to the ServiceAccount
+# Bind the devoops-users role to the devoops-users group
+# All impersonated users will be in this group
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: devoops-agent
+  name: devoops-users
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: devoops-agent
+  name: devoops-users
 subjects:
-  - kind: ServiceAccount
-    name: devoops-agent
-    namespace: devoops
+  - kind: Group
+    name: devoops-users
+    apiGroup: rbac.authorization.k8s.io

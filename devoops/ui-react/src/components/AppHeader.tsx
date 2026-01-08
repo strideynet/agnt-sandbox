@@ -25,15 +25,16 @@ export function AppHeader() {
         <div className="flex items-center gap-4">
           {user && (
             <>
+              <span className="text-gray-600 text-sm">{user.email}</span>
               <Link
                 to="/auth"
-                className="text-gray-600 hover:text-gray-800 text-sm"
+                className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
               >
-                {user.email}
+                Auth Debug
               </Link>
               <button
                 onClick={handleLogout}
-                className="text-blue-600 hover:underline text-sm"
+                className="px-3 py-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-md transition-colors"
               >
                 Logout
               </button>

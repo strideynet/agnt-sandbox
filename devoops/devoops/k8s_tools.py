@@ -12,23 +12,32 @@ from kubernetes.dynamic.exceptions import ResourceNotFoundError
 class K8sClient:
     """Wrapper around Kubernetes client with tool methods."""
 
-    def __init__(self, in_cluster: bool = False):
+    # Group used for all impersonated users - grants K8s permissions via RBAC
+    IMPERSONATE_GROUP = "devoops-users"
+
+    def __init__(self, in_cluster: bool = False, impersonate_user: str = None):
         """Initialize the Kubernetes client.
 
         Args:
             in_cluster: If True, use in-cluster config. Otherwise use kubeconfig.
+            impersonate_user: If provided, set Impersonate-User and Impersonate-Group
+                headers on all API calls. The user is for audit trail, the group
+                provides RBAC permissions.
         """
         if in_cluster:
             config.load_incluster_config()
         else:
             config.load_kube_config()
 
-        self.core_v1 = client.CoreV1Api()
-        self.apps_v1 = client.AppsV1Api()
+        # Create ApiClient with optional impersonation for audit trail
+        api_client = client.ApiClient()
+        if impersonate_user:
+            api_client.set_default_header('Impersonate-User', impersonate_user)
+            api_client.set_default_header('Impersonate-Group', self.IMPERSONATE_GROUP)
 
-        # Dynamic client for applying arbitrary manifests
-        k8s_client = client.ApiClient()
-        self.dynamic_client = DynamicClient(k8s_client)
+        self.core_v1 = client.CoreV1Api(api_client)
+        self.apps_v1 = client.AppsV1Api(api_client)
+        self.dynamic_client = DynamicClient(api_client)
 
     def list_pods(self, namespace: str = "default") -> str:
         """List all pods in a namespace.

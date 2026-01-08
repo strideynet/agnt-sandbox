@@ -68,9 +68,12 @@ def missions_proxy():
     """Proxy missions API to the agent."""
     try:
         if request.method == "POST":
+            # Inject user email for audit trail via K8s impersonation
+            data = request.get_json() or {}
+            data["triggered_by"] = session.get("email")
             response = requests.post(
                 f"{AGENT_URL}/api/missions",
-                json=request.get_json(),
+                json=data,
                 timeout=10
             )
         else:

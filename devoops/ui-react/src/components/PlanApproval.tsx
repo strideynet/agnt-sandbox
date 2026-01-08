@@ -91,9 +91,22 @@ export function PlanApproval({
                 {isExpanded && (
                   <div className="px-3 pb-3 pt-0">
                     <div className="bg-gray-900 rounded p-3 overflow-x-auto">
-                      <pre className="text-green-400 text-xs font-mono whitespace-pre-wrap">
-                        {JSON.stringify(action.parameters, null, 2)}
-                      </pre>
+                      <div className="space-y-3">
+                        {Object.entries(action.parameters).map(([key, value]) => (
+                          <div key={key}>
+                            <span className="text-blue-400 text-xs font-mono font-semibold">{key}:</span>
+                            {typeof value === 'string' && value.includes('\n') ? (
+                              <pre className="text-green-400 text-xs font-mono whitespace-pre mt-1 pl-3 border-l-2 border-gray-700">
+                                {value}
+                              </pre>
+                            ) : (
+                              <span className="text-green-400 text-xs font-mono ml-2">
+                                {typeof value === 'string' ? value : JSON.stringify(value)}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 )}

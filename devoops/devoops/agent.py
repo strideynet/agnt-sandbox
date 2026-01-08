@@ -134,9 +134,10 @@ INTERACTION_TOOLS = [
 class Mission:
     """Represents a mission with status and results."""
 
-    def __init__(self, mission_id: str, prompt: str):
+    def __init__(self, mission_id: str, prompt: str, triggered_by: str = None):
         self.id = mission_id
         self.prompt = prompt
+        self.triggered_by = triggered_by  # User email for audit trail
         self.status = MissionStatus.PENDING
         self.logs: List[str] = []
         self.result: Optional[str] = None
@@ -164,6 +165,7 @@ class Mission:
         return {
             "id": self.id,
             "prompt": self.prompt,
+            "triggered_by": self.triggered_by,
             "status": self.status.value,
             "logs": self.logs,
             "result": self.result,
@@ -187,6 +189,8 @@ class DevoopsAgent:
             in_cluster: Whether running in-cluster (use ServiceAccount) or local
         """
         self.client = OpenAI(api_key=api_key)
+        self.in_cluster = in_cluster
+        # Default K8s client (without impersonation) for non-mission operations
         self.k8s = K8sClient(in_cluster=in_cluster)
         self.testing = TestingClient(core_v1=self.k8s.core_v1)
         self.model = "gpt-4o"
@@ -208,11 +212,12 @@ class DevoopsAgent:
         self.worker_thread: Optional[threading.Thread] = None
         self.running = False
 
-    def submit_mission(self, prompt: str) -> str:
+    def submit_mission(self, prompt: str, triggered_by: str = None) -> str:
         """Submit a new mission and return its ID.
 
         Args:
             prompt: The mission prompt
+            triggered_by: Email of the user who triggered the mission (for audit trail)
 
         Returns:
             Mission ID
@@ -220,9 +225,9 @@ class DevoopsAgent:
         with self.lock:
             self.mission_counter += 1
             mission_id = f"mission-{self.mission_counter}"
-            mission = Mission(mission_id, prompt)
+            mission = Mission(mission_id, prompt, triggered_by=triggered_by)
             self.missions[mission_id] = mission
-            mission.add_log(f"Mission submitted: {prompt}")
+            mission.add_log(f"Mission submitted by {triggered_by or 'unknown'}: {prompt}")
 
         return mission_id
 
@@ -368,6 +373,13 @@ IMPORTANT GUIDELINES:
         Returns:
             The final response from the agent, or None if awaiting user input
         """
+        # Create mission-specific K8s client with user impersonation for audit trail
+        mission_k8s = K8sClient(
+            in_cluster=self.in_cluster,
+            impersonate_user=mission.triggered_by
+        )
+        mission_testing = TestingClient(core_v1=mission_k8s.core_v1)
+
         # Resume from stored conversation or start fresh
         if mission.conversation_history:
             messages = mission.conversation_history
@@ -455,9 +467,13 @@ IMPORTANT GUIDELINES:
                         })
                         mission.add_log(f"Blocked unapproved mutation: {tool_name}")
                     else:
-                        # Execute the tool
+                        # Execute the tool using mission-specific clients
                         try:
-                            result = self._execute_tool(tool_name, tool_input)
+                            result = self._execute_tool(
+                                tool_name, tool_input,
+                                k8s_client=mission_k8s,
+                                testing_client=mission_testing
+                            )
                             result_preview = result[:200] if len(result) > 200 else result
                             mission.add_log(f"Tool result: {result_preview}...")
                         except Exception as e:
@@ -556,34 +572,46 @@ IMPORTANT GUIDELINES:
 
         return "Mission ended unexpectedly"
 
-    def _execute_tool(self, tool_name: str, tool_input: dict) -> str:
+    def _execute_tool(
+        self,
+        tool_name: str,
+        tool_input: dict,
+        k8s_client: K8sClient = None,
+        testing_client: TestingClient = None
+    ) -> str:
         """Execute a Kubernetes tool.
 
         Args:
             tool_name: Name of the tool to execute
             tool_input: Input parameters for the tool
+            k8s_client: K8s client to use (defaults to self.k8s)
+            testing_client: Testing client to use (defaults to self.testing)
 
         Returns:
             Tool execution result as a string
         """
+        # Use provided clients or fall back to defaults
+        k8s = k8s_client or self.k8s
+        testing = testing_client or self.testing
+
         # Map tool names to methods
         tool_map = {
             # K8s resource inspection tools
-            "list_pods": self.k8s.list_pods,
-            "get_pod_logs": self.k8s.get_pod_logs,
-            "describe_pod": self.k8s.describe_pod,
-            "list_deployments": self.k8s.list_deployments,
-            "list_namespaces": self.k8s.list_namespaces,
+            "list_pods": k8s.list_pods,
+            "get_pod_logs": k8s.get_pod_logs,
+            "describe_pod": k8s.describe_pod,
+            "list_deployments": k8s.list_deployments,
+            "list_namespaces": k8s.list_namespaces,
             # K8s resource management tools
-            "scale_deployment": self.k8s.scale_deployment,
-            "apply_manifest": self.k8s.apply_manifest,
-            "delete_resource": self.k8s.delete_resource,
-            "get_resource": self.k8s.get_resource,
+            "scale_deployment": k8s.scale_deployment,
+            "apply_manifest": k8s.apply_manifest,
+            "delete_resource": k8s.delete_resource,
+            "get_resource": k8s.get_resource,
             # Testing tools
-            "http_request": self.testing.http_request,
-            "exec_in_pod": self.testing.exec_in_pod,
-            "wait_for_pod_ready": self.testing.wait_for_pod_ready,
-            "check_service_endpoints": self.testing.check_service_endpoints,
+            "http_request": testing.http_request,
+            "exec_in_pod": testing.exec_in_pod,
+            "wait_for_pod_ready": testing.wait_for_pod_ready,
+            "check_service_endpoints": testing.check_service_endpoints,
         }
 
         if tool_name not in tool_map:
@@ -618,7 +646,8 @@ def create_flask_app(agent: DevoopsAgent):
         if not data or "prompt" not in data:
             return jsonify({"error": "Missing 'prompt' field"}), 400
 
-        mission_id = agent.submit_mission(data["prompt"])
+        triggered_by = data.get("triggered_by")
+        mission_id = agent.submit_mission(data["prompt"], triggered_by=triggered_by)
         mission = agent.get_mission(mission_id)
 
         return jsonify(mission.to_dict()), 201
