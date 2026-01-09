@@ -10,7 +10,14 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional, Dict, List, Any
 from openai import OpenAI
-from devoops.k8s_tools import K8sClient, READ_ONLY_TOOLS, MUTATING_TOOLS
+from devoops.k8s_tools import (
+    K8sClient,
+    ClusterRegistry,
+    READ_ONLY_TOOLS,
+    MUTATING_TOOLS,
+    CLUSTER_TOOLS,
+)
+from devoops.cluster_config import load_cluster_config, ClusterConfigError
 from devoops.test_tools import TestingClient, READ_ONLY_TESTING_TOOLS, MUTATING_TESTING_TOOLS
 
 logging.basicConfig(
@@ -181,28 +188,61 @@ class Mission:
 class DevoopsAgent:
     """The Devoops agent that executes missions in Kubernetes."""
 
-    def __init__(self, api_key: str, in_cluster: bool = False):
+    def __init__(
+        self,
+        api_key: str,
+        cluster_config_path: str = "/etc/devoops/clusters.yaml",
+        in_cluster: bool = False,
+    ):
         """Initialize the agent.
 
         Args:
             api_key: OpenAI API key
-            in_cluster: Whether running in-cluster (use ServiceAccount) or local
+            cluster_config_path: Path to the clusters.yaml configuration file
+            in_cluster: Whether running in-cluster (used as fallback if no config file)
         """
         self.client = OpenAI(api_key=api_key)
-        self.in_cluster = in_cluster
-        # Default K8s client (without impersonation) for non-mission operations
-        self.k8s = K8sClient(in_cluster=in_cluster)
-        self.testing = TestingClient(core_v1=self.k8s.core_v1)
         self.model = "gpt-4o"
 
+        # Load cluster configuration
+        try:
+            clusters, default_cluster = load_cluster_config(cluster_config_path)
+            self.cluster_registry = ClusterRegistry(clusters, default_cluster)
+            logger.info(
+                f"Loaded {len(clusters)} cluster(s): {self.cluster_registry.get_cluster_names()}"
+            )
+        except ClusterConfigError as e:
+            logger.warning(f"Failed to load cluster config: {e}. Using fallback mode.")
+            # Fallback: create a single "local" cluster with ambient auth
+            from devoops.cluster_config import ClusterConfig, ClusterAuth, AuthType
+
+            fallback_cluster = ClusterConfig(
+                name="local",
+                display_name="Local Cluster",
+                description="Default local cluster (fallback mode)",
+                auth=ClusterAuth(type=AuthType.AMBIENT),
+            )
+            self.cluster_registry = ClusterRegistry([fallback_cluster], default_cluster="local")
+            self.in_cluster = in_cluster
+
         # Tool sets for human-in-the-loop
-        self.read_only_tools = READ_ONLY_TOOLS + READ_ONLY_TESTING_TOOLS + INTERACTION_TOOLS
+        self.read_only_tools = (
+            CLUSTER_TOOLS + READ_ONLY_TOOLS + READ_ONLY_TESTING_TOOLS + INTERACTION_TOOLS
+        )
         self.mutating_tools = MUTATING_TOOLS + MUTATING_TESTING_TOOLS
         self.all_tools = self.read_only_tools + self.mutating_tools
 
         # Mutating tool names for validation
         self.mutating_tool_names = {
             "scale_deployment", "apply_manifest", "delete_resource", "exec_in_pod"
+        }
+
+        # K8s tools that require cluster parameter
+        self.k8s_tool_names = {
+            "list_pods", "get_pod_logs", "describe_pod", "list_deployments",
+            "list_namespaces", "scale_deployment", "apply_manifest",
+            "delete_resource", "get_resource", "exec_in_pod",
+            "wait_for_pod_ready", "check_service_endpoints"
         }
 
         # Mission storage (in-memory)
@@ -317,34 +357,47 @@ class DevoopsAgent:
 
     def _get_system_prompt(self, mission: Mission) -> str:
         """Get the system prompt based on mission state."""
-        base_prompt = """You are a DevOps agent with the ability to manage Kubernetes resources and test your changes.
+        # Get available clusters for context
+        cluster_info = self.cluster_registry.get_cluster_info()
+        cluster_names = [c["name"] for c in cluster_info]
+        cluster_list = ", ".join(cluster_names)
+
+        base_prompt = f"""You are a DevOps agent with the ability to manage Kubernetes resources across multiple clusters.
+
+AVAILABLE CLUSTERS: {cluster_list}
 
 IMPORTANT GUIDELINES:
 
-1. AUTONOMY: Complete missions autonomously using sensible defaults. Use the 'default' namespace unless specified otherwise. Do NOT ask questions about namespace choices or other details that have reasonable defaults - just proceed with the default and let the user know what you chose.
+1. MULTI-CLUSTER OPERATION: You have access to multiple Kubernetes clusters. Before performing operations:
+   - Call list_clusters to see available clusters and their descriptions
+   - ALWAYS specify the 'cluster' parameter when calling K8s tools
+   - You can perform operations across multiple clusters in a single mission
 
-2. MUTATION APPROVAL: Before executing ANY mutating operation (scale_deployment, apply_manifest, delete_resource, exec_in_pod), you MUST call propose_mutation_plan with a summary and list of actions. Wait for user approval before proceeding.
+2. AUTONOMY: Complete missions autonomously using sensible defaults. Use the 'default' namespace unless specified otherwise. Do NOT ask questions about namespace choices or other details that have reasonable defaults - just proceed with the default and let the user know what you chose.
 
-3. COMPLETE PARAMETERS IN PLANS: When calling propose_mutation_plan, you MUST include the COMPLETE parameters for each action. For apply_manifest, this means including the full YAML manifest in the yaml_content field. The user needs to see exactly what will be applied. Example:
-   {
+3. MUTATION APPROVAL: Before executing ANY mutating operation (scale_deployment, apply_manifest, delete_resource, exec_in_pod), you MUST call propose_mutation_plan with a summary and list of actions. Include the cluster name in your plan descriptions so the user knows which cluster will be affected. Wait for user approval before proceeding.
+
+4. COMPLETE PARAMETERS IN PLANS: When calling propose_mutation_plan, you MUST include the COMPLETE parameters for each action, including the cluster parameter. For apply_manifest, this means including the full YAML manifest in the yaml_content field. The user needs to see exactly what will be applied. Example:
+   {{
      "tool": "apply_manifest",
-     "description": "Create nginx Deployment",
-     "parameters": {
+     "description": "Create nginx Deployment on production cluster",
+     "parameters": {{
+       "cluster": "production",
        "yaml_content": "apiVersion: apps/v1\\nkind: Deployment\\nmetadata:\\n  name: nginx\\n...",
        "namespace": "default"
-     }
-   }
+     }}
+   }}
 
-4. BATCHING: Batch related mutating actions into a single plan when possible. For example, if deploying an application, include all manifests (Deployment, Service, ConfigMap) in one plan.
+5. BATCHING: Batch related mutating actions into a single plan when possible. For example, if deploying an application, include all manifests (Deployment, Service, ConfigMap) in one plan.
 
-5. VERIFICATION: After making changes, verify they work correctly:
+6. VERIFICATION: After making changes, verify they work correctly:
    - Use wait_for_pod_ready to ensure pods are running
    - Use check_service_endpoints to verify services
    - Use http_request to test HTTP endpoints
 
-6. READ OPERATIONS: You can freely use read-only tools (list_pods, get_pod_logs, describe_pod, list_deployments, list_namespaces, get_resource, http_request, wait_for_pod_ready, check_service_endpoints) without approval.
+7. READ OPERATIONS: You can freely use read-only tools (list_clusters, list_pods, get_pod_logs, describe_pod, list_deployments, list_namespaces, get_resource, http_request, wait_for_pod_ready, check_service_endpoints) without approval.
 
-7. CLARIFICATION: If you genuinely need user input (e.g., the mission is truly ambiguous with no reasonable default), use the request_clarification tool. NEVER ask questions in your final response text - either use request_clarification tool or proceed with a sensible default."""
+8. CLARIFICATION: If you genuinely need user input (e.g., the mission is truly ambiguous with no reasonable default), use the request_clarification tool. NEVER ask questions in your final response text - either use request_clarification tool or proceed with a sensible default."""
 
         if mission.plan_approved:
             base_prompt += "\n\nNOTE: Your mutation plan has been APPROVED. You may now execute the planned actions."
@@ -373,12 +426,8 @@ IMPORTANT GUIDELINES:
         Returns:
             The final response from the agent, or None if awaiting user input
         """
-        # Create mission-specific K8s client with user impersonation for audit trail
-        mission_k8s = K8sClient(
-            in_cluster=self.in_cluster,
-            impersonate_user=mission.triggered_by
-        )
-        mission_testing = TestingClient(core_v1=mission_k8s.core_v1)
+        # User impersonation is handled per-tool call via cluster_registry.get_client()
+        impersonate_user = mission.triggered_by
 
         # Resume from stored conversation or start fresh
         if mission.conversation_history:
@@ -467,12 +516,11 @@ IMPORTANT GUIDELINES:
                         })
                         mission.add_log(f"Blocked unapproved mutation: {tool_name}")
                     else:
-                        # Execute the tool using mission-specific clients
+                        # Execute the tool using cluster registry for K8s operations
                         try:
                             result = self._execute_tool(
                                 tool_name, tool_input,
-                                k8s_client=mission_k8s,
-                                testing_client=mission_testing
+                                impersonate_user=impersonate_user
                             )
                             result_preview = result[:200] if len(result) > 200 else result
                             mission.add_log(f"Tool result: {result_preview}...")
@@ -572,53 +620,84 @@ IMPORTANT GUIDELINES:
 
         return "Mission ended unexpectedly"
 
+    def list_clusters(self) -> str:
+        """List all available clusters.
+
+        Returns:
+            JSON string with cluster information
+        """
+        clusters = self.cluster_registry.get_cluster_info()
+        return json.dumps({
+            "clusters": clusters,
+            "default_cluster": self.cluster_registry.default_cluster,
+        }, indent=2)
+
     def _execute_tool(
         self,
         tool_name: str,
         tool_input: dict,
-        k8s_client: K8sClient = None,
-        testing_client: TestingClient = None
+        impersonate_user: str = None,
     ) -> str:
-        """Execute a Kubernetes tool.
+        """Execute a tool.
 
         Args:
             tool_name: Name of the tool to execute
             tool_input: Input parameters for the tool
-            k8s_client: K8s client to use (defaults to self.k8s)
-            testing_client: Testing client to use (defaults to self.testing)
+            impersonate_user: User to impersonate for K8s operations (for audit trail)
 
         Returns:
             Tool execution result as a string
         """
-        # Use provided clients or fall back to defaults
-        k8s = k8s_client or self.k8s
-        testing = testing_client or self.testing
+        # Handle cluster tool
+        if tool_name == "list_clusters":
+            return self.list_clusters()
 
-        # Map tool names to methods
-        tool_map = {
-            # K8s resource inspection tools
-            "list_pods": k8s.list_pods,
-            "get_pod_logs": k8s.get_pod_logs,
-            "describe_pod": k8s.describe_pod,
-            "list_deployments": k8s.list_deployments,
-            "list_namespaces": k8s.list_namespaces,
-            # K8s resource management tools
-            "scale_deployment": k8s.scale_deployment,
-            "apply_manifest": k8s.apply_manifest,
-            "delete_resource": k8s.delete_resource,
-            "get_resource": k8s.get_resource,
-            # Testing tools
-            "http_request": testing.http_request,
-            "exec_in_pod": testing.exec_in_pod,
-            "wait_for_pod_ready": testing.wait_for_pod_ready,
-            "check_service_endpoints": testing.check_service_endpoints,
-        }
+        # Handle http_request (doesn't need cluster)
+        if tool_name == "http_request":
+            testing = TestingClient(core_v1=None)
+            return testing.http_request(**tool_input)
 
-        if tool_name not in tool_map:
-            raise ValueError(f"Unknown tool: {tool_name}")
+        # For K8s tools, extract and resolve cluster parameter
+        if tool_name in self.k8s_tool_names:
+            cluster_name = tool_input.pop("cluster", None)
+            try:
+                resolved_cluster = self.cluster_registry.resolve_cluster(cluster_name)
+            except ValueError as e:
+                return json.dumps({"error": str(e)}, indent=2)
 
-        tool_func = tool_map[tool_name]
-        return tool_func(**tool_input)
+            # Get client for this cluster with impersonation
+            k8s_client = self.cluster_registry.get_client(
+                resolved_cluster,
+                impersonate_user=impersonate_user
+            )
+            testing_client = TestingClient(core_v1=k8s_client.core_v1)
+
+            # Map tool names to methods
+            tool_map = {
+                # K8s resource inspection tools
+                "list_pods": k8s_client.list_pods,
+                "get_pod_logs": k8s_client.get_pod_logs,
+                "describe_pod": k8s_client.describe_pod,
+                "list_deployments": k8s_client.list_deployments,
+                "list_namespaces": k8s_client.list_namespaces,
+                # K8s resource management tools
+                "scale_deployment": k8s_client.scale_deployment,
+                "apply_manifest": k8s_client.apply_manifest,
+                "delete_resource": k8s_client.delete_resource,
+                "get_resource": k8s_client.get_resource,
+                # Testing tools that need K8s
+                "exec_in_pod": testing_client.exec_in_pod,
+                "wait_for_pod_ready": testing_client.wait_for_pod_ready,
+                "check_service_endpoints": testing_client.check_service_endpoints,
+            }
+
+            if tool_name not in tool_map:
+                raise ValueError(f"Unknown tool: {tool_name}")
+
+            tool_func = tool_map[tool_name]
+            return tool_func(**tool_input)
+
+        raise ValueError(f"Unknown tool: {tool_name}")
 
 
 def create_flask_app(agent: DevoopsAgent):
@@ -638,6 +717,15 @@ def create_flask_app(agent: DevoopsAgent):
     def health():
         """Health check endpoint."""
         return jsonify({"status": "healthy"}), 200
+
+    @app.route("/api/clusters", methods=["GET"])
+    def get_clusters():
+        """List available Kubernetes clusters."""
+        clusters = agent.cluster_registry.get_cluster_info()
+        return jsonify({
+            "clusters": clusters,
+            "default_cluster": agent.cluster_registry.default_cluster,
+        }), 200
 
     @app.route("/api/missions", methods=["POST"])
     def submit_mission():
@@ -758,12 +846,22 @@ def main():
         logger.error("OPENAI_API_KEY environment variable not set")
         return
 
-    # Detect if running in cluster
+    # Get cluster config path
+    cluster_config_path = os.environ.get(
+        "CLUSTER_CONFIG_PATH", "/etc/devoops/clusters.yaml"
+    )
+
+    # Detect if running in cluster (used as fallback if no config file)
     in_cluster = os.environ.get("KUBERNETES_SERVICE_HOST") is not None
     logger.info(f"Running in cluster: {in_cluster}")
+    logger.info(f"Cluster config path: {cluster_config_path}")
 
     # Create agent
-    agent = DevoopsAgent(api_key=api_key, in_cluster=in_cluster)
+    agent = DevoopsAgent(
+        api_key=api_key,
+        cluster_config_path=cluster_config_path,
+        in_cluster=in_cluster,
+    )
 
     # Check if running in server mode or CLI mode
     mode = os.environ.get("MODE", "cli")

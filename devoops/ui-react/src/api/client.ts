@@ -1,4 +1,4 @@
-import type { Mission, SubmitMissionRequest, ApiError, User } from '../types/mission';
+import type { Mission, SubmitMissionRequest, ApiError, User, ClustersResponse } from '../types/mission';
 
 // Use empty string for same-origin requests (React and Flask served via same nginx)
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
@@ -86,6 +86,11 @@ class ApiClient {
         rejection_reason: rejectionReason,
       }),
     });
+  }
+
+  // Cluster endpoints
+  async getClusters(): Promise<ClustersResponse> {
+    return this.fetch<ClustersResponse>('/api/clusters');
   }
 
   // Auth endpoints

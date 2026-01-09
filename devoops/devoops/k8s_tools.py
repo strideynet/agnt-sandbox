@@ -1,43 +1,120 @@
 """Kubernetes tools for the devoops agent."""
 
+import base64
 import json
+import tempfile
 import yaml
-from typing import Any
+from typing import Any, Optional, Dict, List
+
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from kubernetes.dynamic import DynamicClient
 from kubernetes.dynamic.exceptions import ResourceNotFoundError
 
+from devoops.cluster_config import ClusterConfig, ClusterAuth, AuthType
+
 
 class K8sClient:
     """Wrapper around Kubernetes client with tool methods."""
 
-    # Group used for all impersonated users - grants K8s permissions via RBAC
-    IMPERSONATE_GROUP = "devoops-users"
+    # Default group used for all impersonated users - grants K8s permissions via RBAC
+    DEFAULT_IMPERSONATE_GROUP = "devoops-users"
 
-    def __init__(self, in_cluster: bool = False, impersonate_user: str = None):
+    def __init__(
+        self,
+        cluster_config: ClusterConfig = None,
+        in_cluster: bool = False,
+        impersonate_user: str = None,
+    ):
         """Initialize the Kubernetes client.
 
         Args:
+            cluster_config: ClusterConfig with authentication details. If provided,
+                in_cluster is ignored.
             in_cluster: If True, use in-cluster config. Otherwise use kubeconfig.
+                Only used if cluster_config is None.
             impersonate_user: If provided, set Impersonate-User and Impersonate-Group
                 headers on all API calls. The user is for audit trail, the group
                 provides RBAC permissions.
         """
-        if in_cluster:
-            config.load_incluster_config()
-        else:
-            config.load_kube_config()
+        # Build kubernetes Configuration object
+        configuration = client.Configuration()
 
-        # Create ApiClient with optional impersonation for audit trail
-        api_client = client.ApiClient()
+        if cluster_config:
+            self._configure_from_cluster_config(configuration, cluster_config)
+            effective_group = cluster_config.impersonate_group
+        elif in_cluster:
+            # Legacy path - load in-cluster config
+            config.load_incluster_config()
+            configuration = client.Configuration.get_default_copy()
+            effective_group = self.DEFAULT_IMPERSONATE_GROUP
+        else:
+            # Legacy path - load kubeconfig
+            config.load_kube_config()
+            configuration = client.Configuration.get_default_copy()
+            effective_group = self.DEFAULT_IMPERSONATE_GROUP
+
+        # Create ApiClient with the configuration
+        api_client = client.ApiClient(configuration)
+
+        # Set impersonation headers if user provided
         if impersonate_user:
-            api_client.set_default_header('Impersonate-User', impersonate_user)
-            api_client.set_default_header('Impersonate-Group', self.IMPERSONATE_GROUP)
+            api_client.set_default_header("Impersonate-User", impersonate_user)
+            api_client.set_default_header("Impersonate-Group", effective_group)
 
         self.core_v1 = client.CoreV1Api(api_client)
         self.apps_v1 = client.AppsV1Api(api_client)
         self.dynamic_client = DynamicClient(api_client)
+        self._api_client = api_client
+        self._temp_files: List[str] = []  # Track temp files for cleanup
+
+    def _configure_from_cluster_config(
+        self, configuration: client.Configuration, cluster_config: ClusterConfig
+    ):
+        """Configure kubernetes client from ClusterConfig.
+
+        Args:
+            configuration: Kubernetes Configuration object to modify
+            cluster_config: ClusterConfig with authentication details
+        """
+        auth = cluster_config.auth
+
+        if auth.type == AuthType.AMBIENT:
+            # Load in-cluster config into the configuration object
+            config.load_incluster_config(client_configuration=configuration)
+            return
+
+        # Set server URL for non-ambient auth
+        configuration.host = auth.server
+
+        # Write CA cert to temp file (kubernetes client needs file path)
+        if auth.certificate_authority_data:
+            ca_data = base64.b64decode(auth.certificate_authority_data)
+            ca_file = tempfile.NamedTemporaryFile(delete=False, suffix=".crt")
+            ca_file.write(ca_data)
+            ca_file.close()
+            configuration.ssl_ca_cert = ca_file.name
+            self._temp_files.append(ca_file.name)
+
+        if auth.type == AuthType.CERTIFICATE:
+            # Client certificate authentication
+            cert_data = base64.b64decode(auth.client_certificate_data)
+            cert_file = tempfile.NamedTemporaryFile(delete=False, suffix=".crt")
+            cert_file.write(cert_data)
+            cert_file.close()
+            configuration.cert_file = cert_file.name
+            self._temp_files.append(cert_file.name)
+
+            key_data = base64.b64decode(auth.client_key_data)
+            key_file = tempfile.NamedTemporaryFile(delete=False, suffix=".key")
+            key_file.write(key_data)
+            key_file.close()
+            configuration.key_file = key_file.name
+            self._temp_files.append(key_file.name)
+
+        elif auth.type == AuthType.TOKEN:
+            # Bearer token authentication
+            configuration.api_key = {"authorization": f"Bearer {auth.token}"}
 
     def list_pods(self, namespace: str = "default") -> str:
         """List all pods in a namespace.
@@ -428,22 +505,133 @@ class K8sClient:
             }, indent=2)
 
 
+class ClusterRegistry:
+    """Manages K8sClient instances for multiple clusters."""
+
+    def __init__(
+        self, clusters: List[ClusterConfig], default_cluster: Optional[str] = None
+    ):
+        """Initialize the registry.
+
+        Args:
+            clusters: List of cluster configurations
+            default_cluster: Name of default cluster (None means cluster is required)
+        """
+        self.clusters = {c.name: c for c in clusters}
+        self.default_cluster = default_cluster
+        self._clients: Dict[str, Dict[str, K8sClient]] = {}  # cluster -> user -> client
+
+    def get_cluster_names(self) -> List[str]:
+        """Get list of available cluster names."""
+        return list(self.clusters.keys())
+
+    def get_cluster_info(self) -> List[dict]:
+        """Get sanitized info about all clusters for API responses."""
+        return [c.to_dict() for c in self.clusters.values()]
+
+    def get_client(
+        self, cluster_name: str, impersonate_user: str = None
+    ) -> K8sClient:
+        """Get or create a K8sClient for the specified cluster.
+
+        Args:
+            cluster_name: Name of the cluster
+            impersonate_user: User to impersonate (for audit trail)
+
+        Returns:
+            K8sClient configured for the cluster
+
+        Raises:
+            ValueError: If cluster name is unknown
+        """
+        if cluster_name not in self.clusters:
+            raise ValueError(
+                f"Unknown cluster: {cluster_name}. "
+                f"Available: {list(self.clusters.keys())}"
+            )
+
+        # Cache key includes impersonate_user since headers differ
+        cache_key = impersonate_user or "__none__"
+
+        if cluster_name not in self._clients:
+            self._clients[cluster_name] = {}
+
+        if cache_key not in self._clients[cluster_name]:
+            cluster_config = self.clusters[cluster_name]
+            self._clients[cluster_name][cache_key] = K8sClient(
+                cluster_config=cluster_config,
+                impersonate_user=impersonate_user,
+            )
+
+        return self._clients[cluster_name][cache_key]
+
+    def resolve_cluster(self, cluster_name: Optional[str]) -> str:
+        """Resolve cluster name, using default if not specified.
+
+        Args:
+            cluster_name: Explicit cluster name or None
+
+        Returns:
+            Resolved cluster name
+
+        Raises:
+            ValueError: If cluster not specified and no default configured
+        """
+        if cluster_name:
+            if cluster_name not in self.clusters:
+                raise ValueError(
+                    f"Unknown cluster: {cluster_name}. "
+                    f"Available: {list(self.clusters.keys())}"
+                )
+            return cluster_name
+
+        if self.default_cluster:
+            return self.default_cluster
+
+        raise ValueError(
+            f"Cluster must be specified. Available clusters: {list(self.clusters.keys())}"
+        )
+
+
+# Cluster parameter definition - added to all K8s tools
+_CLUSTER_PARAM = {
+    "type": "string",
+    "description": "Target cluster name. Use list_clusters to see available clusters."
+}
+
+# Cluster discovery tool
+CLUSTER_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "list_clusters",
+            "description": "List all available Kubernetes clusters that the agent can connect to. Call this first to discover cluster names before using other K8s tools.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    }
+]
+
 # Read-only tool definitions for OpenAI API
 READ_ONLY_TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "list_pods",
-            "description": "List all pods in a Kubernetes namespace. Returns pod names, status, restart counts, and container information.",
+            "description": "List all pods in a Kubernetes namespace on the specified cluster. Returns pod names, status, restart counts, and container information.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "cluster": _CLUSTER_PARAM,
                     "namespace": {
                         "type": "string",
                         "description": "The namespace to list pods from. Defaults to 'default'.",
                         "default": "default"
                     }
                 },
+                "required": ["cluster"]
             }
         }
     },
@@ -451,10 +639,11 @@ READ_ONLY_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_pod_logs",
-            "description": "Retrieve logs from a specific pod. Useful for debugging issues.",
+            "description": "Retrieve logs from a specific pod on the specified cluster. Useful for debugging issues.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "cluster": _CLUSTER_PARAM,
                     "name": {
                         "type": "string",
                         "description": "The name of the pod to get logs from"
@@ -470,7 +659,7 @@ READ_ONLY_TOOLS = [
                         "default": 100
                     }
                 },
-                "required": ["name"]
+                "required": ["cluster", "name"]
             }
         }
     },
@@ -478,10 +667,11 @@ READ_ONLY_TOOLS = [
         "type": "function",
         "function": {
             "name": "describe_pod",
-            "description": "Get detailed information about a specific pod including container status, conditions, and recent events.",
+            "description": "Get detailed information about a specific pod on the specified cluster including container status, conditions, and recent events.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "cluster": _CLUSTER_PARAM,
                     "name": {
                         "type": "string",
                         "description": "The name of the pod to describe"
@@ -492,7 +682,7 @@ READ_ONLY_TOOLS = [
                         "default": "default"
                     }
                 },
-                "required": ["name"]
+                "required": ["cluster", "name"]
             }
         }
     },
@@ -500,16 +690,18 @@ READ_ONLY_TOOLS = [
         "type": "function",
         "function": {
             "name": "list_deployments",
-            "description": "List all deployments in a namespace with their replica counts and availability status.",
+            "description": "List all deployments in a namespace on the specified cluster with their replica counts and availability status.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "cluster": _CLUSTER_PARAM,
                     "namespace": {
                         "type": "string",
                         "description": "The namespace to list deployments from. Defaults to 'default'.",
                         "default": "default"
                     }
                 },
+                "required": ["cluster"]
             }
         }
     },
@@ -517,10 +709,13 @@ READ_ONLY_TOOLS = [
         "type": "function",
         "function": {
             "name": "list_namespaces",
-            "description": "List all namespaces in the cluster.",
+            "description": "List all namespaces in the specified cluster.",
             "parameters": {
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "cluster": _CLUSTER_PARAM,
+                },
+                "required": ["cluster"]
             }
         }
     },
@@ -528,10 +723,11 @@ READ_ONLY_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_resource",
-            "description": "Get detailed information about any Kubernetes resource by kind and name.",
+            "description": "Get detailed information about any Kubernetes resource by kind and name on the specified cluster.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "cluster": _CLUSTER_PARAM,
                     "kind": {
                         "type": "string",
                         "description": "Resource kind (e.g., Pod, Deployment, Service)"
@@ -550,7 +746,7 @@ READ_ONLY_TOOLS = [
                         "description": "API version. Will be inferred if not provided."
                     }
                 },
-                "required": ["kind", "name"]
+                "required": ["cluster", "kind", "name"]
             }
         }
     },
@@ -562,10 +758,11 @@ MUTATING_TOOLS = [
         "type": "function",
         "function": {
             "name": "scale_deployment",
-            "description": "Scale a deployment to a specific number of replicas. Use with caution as this modifies cluster state.",
+            "description": "Scale a deployment to a specific number of replicas on the specified cluster. Use with caution as this modifies cluster state.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "cluster": _CLUSTER_PARAM,
                     "name": {
                         "type": "string",
                         "description": "The name of the deployment to scale"
@@ -580,7 +777,7 @@ MUTATING_TOOLS = [
                         "default": "default"
                     }
                 },
-                "required": ["name", "replicas"]
+                "required": ["cluster", "name", "replicas"]
             }
         }
     },
@@ -588,10 +785,11 @@ MUTATING_TOOLS = [
         "type": "function",
         "function": {
             "name": "apply_manifest",
-            "description": "Apply a Kubernetes YAML manifest to create or update resources. You can generate YAML manifests yourself and apply them using this tool.",
+            "description": "Apply a Kubernetes YAML manifest to create or update resources on the specified cluster. You can generate YAML manifests yourself and apply them using this tool.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "cluster": _CLUSTER_PARAM,
                     "yaml_content": {
                         "type": "string",
                         "description": "The YAML manifest content to apply"
@@ -602,7 +800,7 @@ MUTATING_TOOLS = [
                         "default": "default"
                     }
                 },
-                "required": ["yaml_content"]
+                "required": ["cluster", "yaml_content"]
             }
         }
     },
@@ -610,10 +808,11 @@ MUTATING_TOOLS = [
         "type": "function",
         "function": {
             "name": "delete_resource",
-            "description": "Delete a Kubernetes resource by kind and name.",
+            "description": "Delete a Kubernetes resource by kind and name on the specified cluster.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "cluster": _CLUSTER_PARAM,
                     "kind": {
                         "type": "string",
                         "description": "Resource kind (e.g., Pod, Deployment, Service)"
@@ -632,7 +831,7 @@ MUTATING_TOOLS = [
                         "description": "API version (e.g., v1, apps/v1). Will be inferred if not provided."
                     }
                 },
-                "required": ["kind", "name"]
+                "required": ["cluster", "kind", "name"]
             }
         }
     },

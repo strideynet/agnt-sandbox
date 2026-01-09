@@ -246,6 +246,12 @@ class TestingClient:
             )
 
 
+# Cluster parameter definition - added to K8s-dependent tools
+_CLUSTER_PARAM = {
+    "type": "string",
+    "description": "Target cluster name. Use list_clusters to see available clusters."
+}
+
 # Read-only testing tools - these don't modify cluster state
 READ_ONLY_TESTING_TOOLS = [
     {
@@ -287,10 +293,11 @@ READ_ONLY_TESTING_TOOLS = [
         "type": "function",
         "function": {
             "name": "wait_for_pod_ready",
-            "description": "Wait for a pod to be in Ready state. Use this before testing newly created pods.",
+            "description": "Wait for a pod to be in Ready state on the specified cluster. Use this before testing newly created pods.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "cluster": _CLUSTER_PARAM,
                     "pod_name": {
                         "type": "string",
                         "description": "Name of the pod to wait for",
@@ -306,7 +313,7 @@ READ_ONLY_TESTING_TOOLS = [
                         "default": 60,
                     },
                 },
-                "required": ["pod_name"],
+                "required": ["cluster", "pod_name"],
             },
         }
     },
@@ -314,10 +321,11 @@ READ_ONLY_TESTING_TOOLS = [
         "type": "function",
         "function": {
             "name": "check_service_endpoints",
-            "description": "Check if a service has endpoints (backing pods). Useful for verifying that a service is properly configured.",
+            "description": "Check if a service has endpoints (backing pods) on the specified cluster. Useful for verifying that a service is properly configured.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "cluster": _CLUSTER_PARAM,
                     "service_name": {
                         "type": "string",
                         "description": "Name of the service to check",
@@ -328,7 +336,7 @@ READ_ONLY_TESTING_TOOLS = [
                         "default": "default",
                     },
                 },
-                "required": ["service_name"],
+                "required": ["cluster", "service_name"],
             },
         }
     },
@@ -340,10 +348,11 @@ MUTATING_TESTING_TOOLS = [
         "type": "function",
         "function": {
             "name": "exec_in_pod",
-            "description": "Execute a command inside a pod for testing or verification. Useful for checking connectivity, running tests, etc.",
+            "description": "Execute a command inside a pod on the specified cluster for testing or verification. Useful for checking connectivity, running tests, etc.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "cluster": _CLUSTER_PARAM,
                     "pod_name": {
                         "type": "string",
                         "description": "Name of the pod to execute command in",
@@ -363,7 +372,7 @@ MUTATING_TESTING_TOOLS = [
                         "description": "Container name (uses first container if not specified)",
                     },
                 },
-                "required": ["pod_name", "command"],
+                "required": ["cluster", "pod_name", "command"],
             },
         }
     },

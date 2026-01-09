@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: devoops-clusters
+  namespace: devoops
+data:
+  clusters.yaml: |
+    # Cluster configuration for DevOops agent
+    # Each cluster defines how the agent connects to a Kubernetes cluster
+
+    clusters:
+      # Local cluster - uses the agent's service account (ambient auth)
+      - name: "local"
+        displayName: "Local Cluster"
+        description: "The cluster where the agent is deployed"
+        auth:
+          type: "ambient"
+        impersonateGroup: "devoops-users"
+
+    # No default cluster - agent must always specify which cluster to target
+    defaultCluster: null

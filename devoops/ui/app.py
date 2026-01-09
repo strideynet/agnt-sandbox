@@ -129,6 +129,18 @@ def approve_proxy(mission_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/clusters", methods=["GET"])
+@login_required
+def clusters_proxy():
+    """Proxy clusters API to the agent."""
+    try:
+        response = requests.get(f"{AGENT_URL}/api/clusters", timeout=10)
+        return response.json(), response.status_code
+    except Exception as e:
+        logger.error(f"Failed to proxy clusters request to agent: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/me")
 @login_required
 def get_current_user():

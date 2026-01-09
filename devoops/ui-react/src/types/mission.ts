@@ -65,3 +65,19 @@ export interface PlanApprovalResponse {
 export interface ApiError {
   error: string;
 }
+
+// Cluster types
+export type ClusterAuthType = 'ambient' | 'certificate' | 'token';
+
+export interface Cluster {
+  name: string;
+  displayName: string;
+  description: string;
+  authType: ClusterAuthType;
+  impersonateGroup: string;
+}
+
+export interface ClustersResponse {
+  clusters: Cluster[];
+  default_cluster: string | null;
+}

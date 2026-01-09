@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../api/client';
-import type { Mission } from '../types/mission';
+import { KubernetesIcon } from '../components/KubernetesIcon';
+import type { Mission, Cluster, ClusterAuthType } from '../types/mission';
 
 export function HomePage() {
   const [missionPrompt, setMissionPrompt] = useState('');
@@ -15,6 +16,24 @@ export function HomePage() {
     queryFn: () => apiClient.getMissions(),
     refetchInterval: 500,
   });
+
+  // Fetch clusters (less frequently since they don't change often)
+  const { data: clustersData } = useQuery({
+    queryKey: ['clusters'],
+    queryFn: () => apiClient.getClusters(),
+    staleTime: 60000, // 1 minute
+  });
+
+  const getAuthTypeBadgeColor = (authType: ClusterAuthType): string => {
+    switch (authType) {
+      case 'ambient':
+        return 'bg-green-100 text-green-800';
+      case 'token':
+        return 'bg-blue-100 text-blue-800';
+      case 'certificate':
+        return 'bg-purple-100 text-purple-800';
+    }
+  };
 
   // Submit mission mutation
   const submitMission = useMutation({
@@ -103,6 +122,43 @@ export function HomePage() {
           to do in your Kubernetes cluster. The agent will use Claude to reason
           about the task and execute the necessary operations.
         </div>
+
+        {/* Connected Clusters Panel */}
+        {clustersData && clustersData.clusters.length > 0 && (
+          <div className="bg-gray-50 rounded p-4 mb-8">
+            <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+              <KubernetesIcon size={20} />
+              Connected Clusters
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {clustersData.clusters.map((cluster: Cluster) => (
+                <div
+                  key={cluster.name}
+                  className="bg-white border border-gray-200 rounded p-3"
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-semibold text-gray-800">
+                      {cluster.displayName}
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded text-xs font-semibold ${getAuthTypeBadgeColor(cluster.authType)}`}
+                    >
+                      {cluster.authType}
+                    </span>
+                  </div>
+                  <code className="text-xs text-gray-500 bg-gray-100 px-1 rounded">
+                    {cluster.name}
+                  </code>
+                  {cluster.description && (
+                    <p className="text-sm text-gray-600 mt-1">
+                      {cluster.description}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="bg-gray-50 rounded p-5 mb-8">
           <h2 className="text-xl font-semibold mb-4">Submit New Mission</h2>
