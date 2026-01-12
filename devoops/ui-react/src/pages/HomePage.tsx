@@ -119,7 +119,7 @@ export function HomePage() {
           <strong>How it works:</strong>
           <br />
           Submit a natural language mission describing what you want the agent
-          to do in your Kubernetes cluster. The agent will use Claude to reason
+          to do in your Kubernetes cluster. The agent will use OpenAI to reason
           about the task and execute the necessary operations.
         </div>
 
