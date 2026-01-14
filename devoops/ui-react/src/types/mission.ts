@@ -81,3 +81,23 @@ export interface ClustersResponse {
   clusters: Cluster[];
   default_cluster: string | null;
 }
+
+// SSH types
+export interface SSHServer {
+  name: string;
+  displayName: string;
+  description: string;
+  host: string;
+  port: number;
+  username: string;
+}
+
+export interface SSHServersResponse {
+  servers: SSHServer[];
+  default_server: string | null;
+}
+
+export interface SSHPublicKeyResponse {
+  public_key: string;
+  instructions: string;
+}

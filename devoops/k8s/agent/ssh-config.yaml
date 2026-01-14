@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: devoops-ssh-servers
+  namespace: devoops
+data:
+  ssh-servers.yaml: |
+    # SSH server configuration for DevOops agent
+    # Each server defines an SSH host the agent can connect to
+    #
+    # Before adding servers, ensure:
+    # 1. The agent's SSH public key is in ~/.ssh/authorized_keys on the server
+    # 2. The SSH key secret is mounted to the agent pod
+    #
+    # Get the agent's public key from the Settings page in the UI
+
+    servers:
+      # Example configuration - uncomment and modify as needed:
+      #
+      # - name: "web-server"
+      #   displayName: "Production Web Server"
+      #   description: "Main nginx web server"
+      #   host: "192.168.1.100"
+      #   port: 22
+      #   username: "devoops-agent"
+      #
+      # - name: "db-server"
+      #   displayName: "Database Server"
+      #   description: "PostgreSQL primary"
+      #   host: "192.168.1.101"
+      #   port: 22
+      #   username: "devoops-agent"
+
+    # No default server - agent must always specify which server to target
+    defaultServer: null

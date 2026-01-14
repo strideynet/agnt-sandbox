@@ -27,6 +27,12 @@ export function AppHeader() {
             <>
               <span className="text-gray-600 text-sm">{user.email}</span>
               <Link
+                to="/settings"
+                className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
+              >
+                Settings
+              </Link>
+              <Link
                 to="/auth"
                 className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
               >

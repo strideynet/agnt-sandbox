@@ -1,4 +1,4 @@
-import type { Mission, SubmitMissionRequest, ApiError, User, ClustersResponse } from '../types/mission';
+import type { Mission, SubmitMissionRequest, ApiError, User, ClustersResponse, SSHServersResponse, SSHPublicKeyResponse } from '../types/mission';
 
 // Use empty string for same-origin requests (React and Flask served via same nginx)
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
@@ -91,6 +91,15 @@ class ApiClient {
   // Cluster endpoints
   async getClusters(): Promise<ClustersResponse> {
     return this.fetch<ClustersResponse>('/api/clusters');
+  }
+
+  // SSH endpoints
+  async getSSHPublicKey(): Promise<SSHPublicKeyResponse> {
+    return this.fetch<SSHPublicKeyResponse>('/api/ssh/public-key');
+  }
+
+  async getSSHServers(): Promise<SSHServersResponse> {
+    return this.fetch<SSHServersResponse>('/api/ssh/servers');
   }
 
   // Auth endpoints

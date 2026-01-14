@@ -19,6 +19,13 @@ from devoops.k8s_tools import (
 )
 from devoops.cluster_config import load_cluster_config, ClusterConfigError
 from devoops.test_tools import TestingClient, READ_ONLY_TESTING_TOOLS, MUTATING_TESTING_TOOLS
+from devoops.ssh_tools import (
+    SSHServerRegistry,
+    SSH_DISCOVERY_TOOLS,
+    READ_ONLY_SSH_TOOLS,
+    MUTATING_SSH_TOOLS,
+)
+from devoops.ssh_config import load_ssh_config, SSHConfigError, SSHKeyManager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -225,16 +232,51 @@ class DevoopsAgent:
             self.cluster_registry = ClusterRegistry([fallback_cluster], default_cluster="local")
             self.in_cluster = in_cluster
 
+        # Load SSH configuration (optional - graceful fallback if not present)
+        ssh_config_path = os.environ.get(
+            "SSH_CONFIG_PATH", "/etc/devoops/ssh-servers.yaml"
+        )
+        ssh_key_path = os.environ.get(
+            "SSH_KEY_PATH", "/etc/devoops/ssh-keys"
+        )
+
+        self.ssh_registry = None
+        self.key_manager = None
+        try:
+            self.key_manager = SSHKeyManager(ssh_key_path)
+            self.key_manager.load_keys()
+            servers, default_server = load_ssh_config(ssh_config_path)
+            if servers:
+                self.ssh_registry = SSHServerRegistry(
+                    servers, self.key_manager, default_server
+                )
+                logger.info(
+                    f"Loaded {len(servers)} SSH server(s): {self.ssh_registry.get_server_names()}"
+                )
+            else:
+                logger.info("No SSH servers configured")
+        except SSHConfigError as e:
+            logger.warning(f"SSH not available: {e}")
+
+        # Build tool sets based on available backends
+        ssh_tools = []
+        ssh_mutating_tools = []
+        if self.ssh_registry:
+            ssh_tools = SSH_DISCOVERY_TOOLS + READ_ONLY_SSH_TOOLS
+            ssh_mutating_tools = MUTATING_SSH_TOOLS
+
         # Tool sets for human-in-the-loop
         self.read_only_tools = (
-            CLUSTER_TOOLS + READ_ONLY_TOOLS + READ_ONLY_TESTING_TOOLS + INTERACTION_TOOLS
+            CLUSTER_TOOLS + READ_ONLY_TOOLS + READ_ONLY_TESTING_TOOLS +
+            ssh_tools + INTERACTION_TOOLS
         )
-        self.mutating_tools = MUTATING_TOOLS + MUTATING_TESTING_TOOLS
+        self.mutating_tools = MUTATING_TOOLS + MUTATING_TESTING_TOOLS + ssh_mutating_tools
         self.all_tools = self.read_only_tools + self.mutating_tools
 
         # Mutating tool names for validation
         self.mutating_tool_names = {
-            "scale_deployment", "apply_manifest", "delete_resource", "exec_in_pod"
+            "scale_deployment", "apply_manifest", "delete_resource", "exec_in_pod",
+            "ssh_exec",
         }
 
         # K8s tools that require cluster parameter
@@ -243,6 +285,13 @@ class DevoopsAgent:
             "list_namespaces", "scale_deployment", "apply_manifest",
             "delete_resource", "get_resource", "exec_in_pod",
             "wait_for_pod_ready", "check_service_endpoints"
+        }
+
+        # SSH tools that require server parameter
+        self.ssh_tool_names = {
+            "ssh_list_files", "ssh_read_file", "ssh_list_processes",
+            "ssh_check_service", "ssh_disk_usage", "ssh_memory_info",
+            "ssh_uptime", "ssh_tail_log", "ssh_exec",
         }
 
         # Mission storage (in-memory)
@@ -362,7 +411,32 @@ class DevoopsAgent:
         cluster_names = [c["name"] for c in cluster_info]
         cluster_list = ", ".join(cluster_names)
 
-        base_prompt = f"""You are a DevOps agent with the ability to manage Kubernetes resources across multiple clusters.
+        # Get available SSH servers for context
+        ssh_context = ""
+        if self.ssh_registry:
+            ssh_servers = self.ssh_registry.get_server_names()
+            if ssh_servers:
+                ssh_server_list = ", ".join(ssh_servers)
+                ssh_context = f"""
+
+SSH SERVERS: {ssh_server_list}
+
+SSH GUIDELINES:
+- Call list_ssh_servers to see available servers and their details
+- ALWAYS specify the 'server' parameter when calling SSH tools
+- Read-only SSH tools (ssh_list_files, ssh_read_file, ssh_list_processes, ssh_check_service, ssh_disk_usage, ssh_memory_info, ssh_uptime, ssh_tail_log) can be used freely without approval
+- ssh_exec (arbitrary command execution) requires plan approval - include it in propose_mutation_plan
+- For ssh_exec in plans, include the server and command parameters:
+  {{
+    "tool": "ssh_exec",
+    "description": "Restart nginx on web-server",
+    "parameters": {{
+      "server": "web-server",
+      "command": "sudo systemctl restart nginx"
+    }}
+  }}"""
+
+        base_prompt = f"""You are a DevOps agent with the ability to manage Kubernetes resources across multiple clusters and SSH servers.
 
 AVAILABLE CLUSTERS: {cluster_list}
 
@@ -375,9 +449,9 @@ IMPORTANT GUIDELINES:
 
 2. AUTONOMY: Complete missions autonomously using sensible defaults. Use the 'default' namespace unless specified otherwise. Do NOT ask questions about namespace choices or other details that have reasonable defaults - just proceed with the default and let the user know what you chose.
 
-3. MUTATION APPROVAL: Before executing ANY mutating operation (scale_deployment, apply_manifest, delete_resource, exec_in_pod), you MUST call propose_mutation_plan with a summary and list of actions. Include the cluster name in your plan descriptions so the user knows which cluster will be affected. Wait for user approval before proceeding.
+3. MUTATION APPROVAL: Before executing ANY mutating operation (scale_deployment, apply_manifest, delete_resource, exec_in_pod, ssh_exec), you MUST call propose_mutation_plan with a summary and list of actions. Include the cluster/server name in your plan descriptions so the user knows which target will be affected. Wait for user approval before proceeding.
 
-4. COMPLETE PARAMETERS IN PLANS: When calling propose_mutation_plan, you MUST include the COMPLETE parameters for each action, including the cluster parameter. For apply_manifest, this means including the full YAML manifest in the yaml_content field. The user needs to see exactly what will be applied. Example:
+4. COMPLETE PARAMETERS IN PLANS: When calling propose_mutation_plan, you MUST include the COMPLETE parameters for each action, including the cluster/server parameter. For apply_manifest, this means including the full YAML manifest in the yaml_content field. The user needs to see exactly what will be applied. Example:
    {{
      "tool": "apply_manifest",
      "description": "Create nginx Deployment on production cluster",
@@ -397,7 +471,7 @@ IMPORTANT GUIDELINES:
 
 7. READ OPERATIONS: You can freely use read-only tools (list_clusters, list_pods, get_pod_logs, describe_pod, list_deployments, list_namespaces, get_resource, http_request, wait_for_pod_ready, check_service_endpoints) without approval.
 
-8. CLARIFICATION: If you genuinely need user input (e.g., the mission is truly ambiguous with no reasonable default), use the request_clarification tool. NEVER ask questions in your final response text - either use request_clarification tool or proceed with a sensible default."""
+8. CLARIFICATION: If you genuinely need user input (e.g., the mission is truly ambiguous with no reasonable default), use the request_clarification tool. NEVER ask questions in your final response text - either use request_clarification tool or proceed with a sensible default.{ssh_context}"""
 
         if mission.plan_approved:
             base_prompt += "\n\nNOTE: Your mutation plan has been APPROVED. You may now execute the planned actions."
@@ -414,6 +488,10 @@ IMPORTANT GUIDELINES:
             replicas = parameters.get("replicas", 1)
             return "high" if replicas == 0 else "low"
         if tool_name == "exec_in_pod":
+            return "medium"
+        if tool_name == "ssh_exec":
+            # SSH command execution is medium risk by default
+            # Could be enhanced to detect dangerous commands
             return "medium"
         return "medium"
 
@@ -632,6 +710,24 @@ IMPORTANT GUIDELINES:
             "default_cluster": self.cluster_registry.default_cluster,
         }, indent=2)
 
+    def list_ssh_servers(self) -> str:
+        """List all available SSH servers.
+
+        Returns:
+            JSON string with SSH server information
+        """
+        if self.ssh_registry is None:
+            return json.dumps({
+                "error": "SSH not configured",
+                "servers": [],
+            }, indent=2)
+
+        servers = self.ssh_registry.get_server_info()
+        return json.dumps({
+            "servers": servers,
+            "default_server": self.ssh_registry.default_server,
+        }, indent=2)
+
     def _execute_tool(
         self,
         tool_name: str,
@@ -652,10 +748,49 @@ IMPORTANT GUIDELINES:
         if tool_name == "list_clusters":
             return self.list_clusters()
 
+        # Handle SSH server discovery tool
+        if tool_name == "list_ssh_servers":
+            return self.list_ssh_servers()
+
         # Handle http_request (doesn't need cluster)
         if tool_name == "http_request":
             testing = TestingClient(core_v1=None)
             return testing.http_request(**tool_input)
+
+        # Handle SSH tools
+        if tool_name in self.ssh_tool_names:
+            if self.ssh_registry is None:
+                return json.dumps({"error": "SSH not configured"}, indent=2)
+
+            server_name = tool_input.pop("server", None)
+            try:
+                resolved_server = self.ssh_registry.resolve_server(server_name)
+            except ValueError as e:
+                return json.dumps({"error": str(e)}, indent=2)
+
+            ssh_client = self.ssh_registry.get_client(resolved_server)
+
+            # Map tool names to methods
+            ssh_tool_map = {
+                "ssh_list_files": ssh_client.list_files,
+                "ssh_read_file": ssh_client.read_file,
+                "ssh_list_processes": ssh_client.list_processes,
+                "ssh_check_service": ssh_client.check_service,
+                "ssh_disk_usage": ssh_client.disk_usage,
+                "ssh_memory_info": ssh_client.memory_info,
+                "ssh_uptime": ssh_client.uptime,
+                "ssh_tail_log": ssh_client.tail_log,
+                "ssh_exec": ssh_client.exec_command,
+            }
+
+            if tool_name not in ssh_tool_map:
+                return json.dumps({"error": f"Unknown SSH tool: {tool_name}"}, indent=2)
+
+            tool_func = ssh_tool_map[tool_name]
+            # Handle parameter name mapping for list_processes
+            if tool_name == "ssh_list_processes" and "filter" in tool_input:
+                tool_input["filter_str"] = tool_input.pop("filter")
+            return tool_func(**tool_input)
 
         # For K8s tools, extract and resolve cluster parameter
         if tool_name in self.k8s_tool_names:
@@ -834,6 +969,35 @@ def create_flask_app(agent: DevoopsAgent):
         mission._resume_flag = True
 
         return jsonify(mission.to_dict()), 200
+
+    @app.route("/api/ssh/public-key", methods=["GET"])
+    def get_ssh_public_key():
+        """Get the agent's SSH public key for user distribution."""
+        if agent.key_manager is None:
+            return jsonify({"error": "SSH not configured"}), 404
+
+        try:
+            public_key = agent.key_manager.get_public_key_openssh()
+            return jsonify({
+                "public_key": public_key,
+                "instructions": "Add this key to ~/.ssh/authorized_keys on target servers"
+            }), 200
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/ssh/servers", methods=["GET"])
+    def get_ssh_servers():
+        """List configured SSH servers."""
+        if agent.ssh_registry is None:
+            return jsonify({
+                "servers": [],
+                "default_server": None,
+            }), 200
+
+        return jsonify({
+            "servers": agent.ssh_registry.get_server_info(),
+            "default_server": agent.ssh_registry.default_server,
+        }), 200
 
     return app
 

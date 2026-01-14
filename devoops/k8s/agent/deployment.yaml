@@ -16,6 +16,8 @@ spec:
         app: devoops-agent
     spec:
       serviceAccountName: devoops-agent
+      securityContext:
+        fsGroup: 1000  # devoops user group - makes mounted secrets readable
       containers:
         - name: agent
           image: devoops:latest
@@ -34,9 +36,21 @@ spec:
               value: "5000"
             - name: CLUSTER_CONFIG_PATH
               value: "/etc/devoops/clusters.yaml"
+            - name: SSH_CONFIG_PATH
+              value: "/etc/devoops/ssh-servers.yaml"
+            - name: SSH_KEY_PATH
+              value: "/etc/devoops/ssh-keys"
           volumeMounts:
             - name: cluster-config
-              mountPath: /etc/devoops
+              mountPath: /etc/devoops/clusters.yaml
+              subPath: clusters.yaml
+              readOnly: true
+            - name: ssh-config
+              mountPath: /etc/devoops/ssh-servers.yaml
+              subPath: ssh-servers.yaml
+              readOnly: true
+            - name: ssh-keys
+              mountPath: /etc/devoops/ssh-keys
               readOnly: true
           resources:
             requests:
@@ -61,3 +75,11 @@ spec:
         - name: cluster-config
           configMap:
             name: devoops-clusters
+        - name: ssh-config
+          configMap:
+            name: devoops-ssh-servers
+        - name: ssh-keys
+          secret:
+            secretName: devoops-ssh-keys
+            optional: true  # SSH is optional - agent works without it
+            defaultMode: 0400

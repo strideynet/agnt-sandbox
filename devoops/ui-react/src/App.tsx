@@ -4,6 +4,7 @@ import { LoginPage } from './pages/LoginPage';
 import { HomePage } from './pages/HomePage';
 import { MissionDetailPage } from './pages/MissionDetailPage';
 import { AuthDebugPage } from './pages/AuthDebugPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { AppLayout } from './components/AppLayout';
 
 const queryClient = new QueryClient({
@@ -26,6 +27,7 @@ function App() {
             <Route path="/" element={<HomePage />} />
             <Route path="/missions/:id" element={<MissionDetailPage />} />
             <Route path="/auth" element={<AuthDebugPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

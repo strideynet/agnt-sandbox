@@ -6,6 +6,7 @@ namespace: devoops
 resources:
   - deployment.yaml
   - service.yaml
+  - ssh-config.yaml
 
 secretGenerator:
   - name: devoops-config

@@ -44,6 +44,9 @@ k8s/agent/secret.env
 k8s/ui/secret.yaml
 k8s/ui/secret.env
 
+# SSH keys (never commit!)
+k8s/agent/ssh-keys/
+
 # Testing
 .pytest_cache/
 .coverage

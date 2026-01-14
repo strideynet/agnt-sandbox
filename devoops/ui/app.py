@@ -141,6 +141,30 @@ def clusters_proxy():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/ssh/public-key", methods=["GET"])
+@login_required
+def ssh_public_key_proxy():
+    """Proxy SSH public key request to the agent."""
+    try:
+        response = requests.get(f"{AGENT_URL}/api/ssh/public-key", timeout=10)
+        return response.json(), response.status_code
+    except Exception as e:
+        logger.error(f"Failed to proxy SSH public key request to agent: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/ssh/servers", methods=["GET"])
+@login_required
+def ssh_servers_proxy():
+    """Proxy SSH servers request to the agent."""
+    try:
+        response = requests.get(f"{AGENT_URL}/api/ssh/servers", timeout=10)
+        return response.json(), response.status_code
+    except Exception as e:
+        logger.error(f"Failed to proxy SSH servers request to agent: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/me")
 @login_required
 def get_current_user():
